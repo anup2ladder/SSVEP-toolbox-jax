@@ -2,6 +2,7 @@
 """Definition for the parent class for CCA, MEC, and MSI"""
 from .featureExtractor import FeatureExtractor
 import jax.numpy as jnp
+from jax import device_put
 
 class FeatureExtractorTemplateMatching(FeatureExtractor):
     """A parent class for CCA, MEC, and MSI"""
@@ -65,7 +66,8 @@ class FeatureExtractorTemplateMatching(FeatureExtractor):
         if template_signal.ndim != 3:
             self.quit(error_message)
 
-        self._template_signal = template_signal
+        # Transfer data to the desired device
+        self._template_signal = device_put(template_signal, device=self.device)
 
     @property
     def harmonics_count(self):

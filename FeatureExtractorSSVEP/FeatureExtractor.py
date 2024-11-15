@@ -1,10 +1,12 @@
 # featureExtractor.py
 """Definition of the class FeatureExtractor"""
+
 import jax.numpy as jnp
 import sys
 from scipy.signal import sosfiltfilt, butter
 from multiprocessing import Pool
 import numpy as np  # For certain functions not yet supported in JAX
+from jax import device_put, devices
 
 class FeatureExtractor:
     """A parent class for all feature extraction methods"""
@@ -66,6 +68,7 @@ class FeatureExtractor:
         self.max_batch_size = 16
         self.explicit_multithreading = 0
         self.class_initialization_is_complete = False
+        self.device = None  # Device attribute to specify computation device
 
     def build_feature_extractor(
             self,
@@ -100,6 +103,9 @@ class FeatureExtractor:
         self.max_batch_size = max_batch_size
         self.explicit_multithreading = explicit_multithreading
 
+        # Set the computation device based on use_gpu flag
+        self.set_device()
+
         # Embedding delays truncates the signal.
         # Thus, samples count must be updated accordingly.
         if samples_count != 0:
@@ -112,6 +118,16 @@ class FeatureExtractor:
         if samples_count > 0:
             self.class_specific_initializations()
             self.class_initialization_is_complete = True
+
+    def set_device(self):
+        """Set the computation device based on use_gpu flag."""
+        if self.use_gpu:
+            gpu_devices = devices("gpu")
+            if not gpu_devices:
+                self.quit("No GPU device found, but use_gpu is set to True.")
+            self.device = gpu_devices[0]
+        else:
+            self.device = devices("cpu")[0]
 
     def extract_features(self, all_signals):
         """
@@ -277,7 +293,8 @@ class FeatureExtractor:
 
     def handle_generator(self, to_copy):
         """Copy the input and return handle"""
-        handle = to_copy
+        # Transfer data to the desired device
+        handle = device_put(to_copy, device=self.device)
         return handle
 
     def generate_random_selection(self):
@@ -370,7 +387,11 @@ class FeatureExtractor:
                      fs=self.sampling_frequency)
 
         # Operate along the very last dimension of the array.
+        # Since scipy functions operate on numpy arrays, we need to convert
+        self.all_signals = device_get(self.all_signals)
         self.all_signals = sosfiltfilt(sos, self.all_signals, axis=-1)
+        # Transfer back to device
+        self.all_signals = device_put(self.all_signals, device=self.device)
 
     def quit(self, message="Error"):
         """A function to end the program in case of an error"""
@@ -412,17 +433,21 @@ class FeatureExtractor:
 
         all_subbands = []
 
+        # Since scipy functions operate on numpy arrays, we need to convert
+        self.all_signals = device_get(self.all_signals)
+
         for filter_sos in self.sos_matrices:
             signal = sosfiltfilt(filter_sos, self.all_signals, axis=-1)
             all_subbands.append(signal)
 
-        all_subbands = jnp.array(all_subbands)
+        all_subbands = np.array(all_subbands)
 
         # Make sure data remains 3D.
-        all_subbands = jnp.reshape(
+        all_subbands = np.reshape(
             all_subbands, (-1, all_subbands.shape[2], all_subbands.shape[3]))
 
-        self.all_signals = all_subbands
+        # Transfer back to device
+        self.all_signals = device_put(jnp.asarray(all_subbands), device=self.device)
 
     @property
     def all_signals(self):
@@ -451,8 +476,8 @@ class FeatureExtractor:
         if all_signals.ndim != 3:
             self.quit(self.__all_signals_setup_guide)
 
-        self.__all_signals = all_signals
+        self.__all_signals = device_put(all_signals, device=self.device)
         [self.signals_count, self.electrodes_count, self.samples_count] =\
             all_signals.shape
 
-    # ... (Other property getters and setters remain largely the same, adjusted for JAX where necessary)
+    # ... (Other property getters and setters remain largely the same)

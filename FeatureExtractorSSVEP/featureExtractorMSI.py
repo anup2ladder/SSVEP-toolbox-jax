@@ -8,6 +8,8 @@ synchronization index method for SSVEP-based BCI." Neurocomputing
 
 from .featureExtractorTemplateMatching import FeatureExtractorTemplateMatching
 import jax.numpy as jnp
+from jax import jit, device_put, devices
+import numpy as np  # For functions not yet supported in JAX
 
 class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
     """Class of MSI feature extractor"""
@@ -19,6 +21,9 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
         # This is the covariance matrix of the template SSVEP.
         # We can pre-compute this once to improve performance.
         self.C22 = 0
+
+        # Device attribute to specify computation device
+        self.device = None
 
     def setup_feature_extractor(
             self,
@@ -58,9 +63,25 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
             explicit_multithreading=explicit_multithreading,
             samples_count=samples_count)
 
+        # Set the computation device based on use_gpu flag
+        self.set_device()
+
+    def set_device(self):
+        """Set the computation device based on use_gpu flag."""
+        if self.use_gpu:
+            gpu_devices = devices("gpu")
+            if not gpu_devices:
+                self.quit("No GPU device found, but use_gpu is set to True.")
+            self.device = gpu_devices[0]
+        else:
+            self.device = devices("cpu")[0]
+
     def get_features(self):
         """Extract MSI features (synchronization indexes) from signal"""
         signal = self.get_current_data_batch()
+
+        # Transfer data to the desired device
+        signal = device_put(signal, device=self.device)
 
         features = self.compute_synchronization_index(signal)
         batch_size = self.channel_selection_info_bundle[1]
@@ -78,6 +99,10 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
         # Make sure signal is 3D
         signal = signal - jnp.mean(signal, axis=-1)[:, None]
         signal = signal[None, :, :]
+
+        # Transfer data to the desired device
+        signal = device_put(signal, device=self.device)
+
         features = self.compute_synchronization_index(signal)
 
         # De-bundle the results.
@@ -90,6 +115,7 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
 
         return features
 
+    @partial(jit, static_argnums=(0,))
     def compute_synchronization_index(self, signal):
         """Compute the synchronization index between signal and templates"""
         electrodes_count = signal.shape[1]
@@ -162,7 +188,9 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
         """Perform initialization and precomputations common to all voters"""
         # Center data
         self.all_signals = self.all_signals - jnp.mean(self.all_signals, axis=-1)[:, :, None]
-        self.all_signals_handle = self.handle_generator(self.all_signals)
+
+        # Transfer data to the desired device
+        self.all_signals_handle = device_put(self.all_signals, device=self.device)
 
     def class_specific_initializations(self):
         """Perform necessary initializations"""
@@ -170,16 +198,16 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
         self.compute_templates()
         self.precompute_template_covariance()
 
-        # Create handles
-        self.template_signal_handle = self.handle_generator(
-            self.template_signal)
-        self.C22_handle = self.handle_generator(self.C22)
+        # Create handles and transfer to device
+        self.template_signal_handle = device_put(
+            self.template_signal, device=self.device)
+        self.C22_handle = device_put(self.C22, device=self.device)
 
-        self.harmonics_count_handle = self.handle_generator(
-            self.harmonics_count)
+        self.harmonics_count_handle = device_put(
+            self.harmonics_count, device=self.device)
 
-        self.samples_count_handle = self.handle_generator(
-            jnp.float32(self.samples_count))
+        self.samples_count_handle = device_put(
+            jnp.float32(self.samples_count), device=self.device)
 
     def precompute_template_covariance(self):
         """Pre-compute and save the covariance matrix of the template"""
@@ -205,18 +233,21 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
         signals_count = last_signal - first_signal
 
         # Pre-allocate memory for the batch
-        signal = jnp.zeros(
+        signal = np.zeros(
             (signals_count, batch_population,
              batch_electrodes_count, self.samples_count),
-            dtype=jnp.float32)
+            dtype=np.float32)
 
         selected_signals = self.all_signals_handle[first_signal:last_signal]
 
         for j in range(batch_population):
             current_selection = self.channel_selections[batch_index]
-            signal = signal.at[:, j].set(selected_signals[:, current_selection, :])
+            signal[:, j] = selected_signals[:, current_selection, :]
             batch_index += 1
 
-        signal = jnp.reshape(signal, (-1,) + signal.shape[2:])
+        signal = np.reshape(signal, (-1,) + signal.shape[2:])
+
+        # Convert to jax array and transfer to device
+        signal = device_put(jnp.asarray(signal), device=self.device)
 
         return signal

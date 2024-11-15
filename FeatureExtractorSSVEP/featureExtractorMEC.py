@@ -9,8 +9,8 @@ interfaces." IEEE transactions on biomedical engineering 54.4 (2007).
 
 from .featureExtractorTemplateMatching import FeatureExtractorTemplateMatching
 import jax.numpy as jnp
-from jax import jit, vmap
-from scipy.signal import lfilter
+from jax import jit, device_put, devices
+import numpy as np  # For certain functions not yet supported in JAX
 
 class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
     """Class of minimum energy combination feature extractor"""
@@ -32,6 +32,9 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
 
         # The pseudo-inverse of each [sine, cosine] pair for each harmonic
         self.sub_template_inverse = 0
+
+        # Device attribute to specify computation device
+        self.device = None
 
     def setup_feature_extractor(
             self,
@@ -76,13 +79,29 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
         self.ar_order = ar_order
         self.energy_ratio = energy_ratio
 
+        # Set the computation device based on use_gpu flag
+        self.set_device()
+
+    def set_device(self):
+        """Set the computation device based on use_gpu flag."""
+        if self.use_gpu:
+            gpu_devices = devices("gpu")
+            if not gpu_devices:
+                self.quit("No GPU device found, but use_gpu is set to True.")
+            self.device = gpu_devices[0]
+        else:
+            self.device = devices("cpu")[0]
+
     def get_features(self):
         """Extract MEC features (SNRs) from signal"""
         # Extract current batch of data
         (signal, y_bar_squared) = self.get_current_data_batch()
 
-        # Swap the dimensions for samples and electrodes to make the
-        # implementation consistent with the reference.
+        # Transfer data to the desired device
+        signal = device_put(signal, device=self.device)
+        y_bar_squared = device_put(y_bar_squared, device=self.device)
+
+        # Swap the dimensions for samples and electrodes
         signal = jnp.transpose(signal, axes=(0, 2, 1))
 
         # Extract SNRs
@@ -115,6 +134,11 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
             jnp.transpose(y_bar, axes=(0, 2, 1)), y_bar)
 
         y_bar_squared = y_bar_squared[None, :, :, :]
+
+        # Transfer data to the desired device
+        signal = device_put(signal, device=self.device)
+        y_bar_squared = device_put(y_bar_squared, device=self.device)
+
         features = self.compute_snr(signal, y_bar_squared)
 
         # De-bundle the results.
@@ -125,6 +149,7 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
             self.features_count))
         return features
 
+    @partial(jit, static_argnums=(0,))
     def compute_snr(self, signal, y_bar_squared):
         """Compute the SNR"""
         # Project the signal to minimize the power of nuisance signal
@@ -252,7 +277,8 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
         self.all_signals = self.all_signals - jnp.mean(self.all_signals, axis=-1)[:, :, None]
         self.all_signals = self.all_signals / jnp.std(self.all_signals, axis=-1)[:, :, None]
 
-        self.all_signals_handle = self.handle_generator(self.all_signals)
+        # Transfer data to the desired device
+        self.all_signals_handle = device_put(self.all_signals, device=self.device)
 
         signal = self.all_signals_handle
 
@@ -268,7 +294,8 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
         self.y_bar_squared = jnp.matmul(
             jnp.transpose(y_bar, axes=(0, 1, 3, 2)), y_bar)
 
-        self.y_bar_squared_handles = self.handle_generator(self.y_bar_squared)
+        # Transfer precomputed data to device
+        self.y_bar_squared_handles = device_put(self.y_bar_squared, device=self.device)
 
     def class_specific_initializations(self):
         """Perform necessary initializations and precomputations"""
@@ -293,18 +320,18 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
         self.k3 = k3
         self.k2 = k2
 
-        # Create handles
-        self.template_signal_handle = self.handle_generator(
-            self.template_signal)
+        # Create handles and transfer to device
+        self.template_signal_handle = device_put(
+            self.template_signal, device=self.device)
 
-        self.sub_template_inverse_handle = self.handle_generator(
-            self.sub_template_inverse)
+        self.sub_template_inverse_handle = device_put(
+            self.sub_template_inverse, device=self.device)
 
-        self.xplus_handle = self.handle_generator(self.xplus)
-        self.k2_handle = self.handle_generator(self.k2)
-        self.k3_handle = self.handle_generator(self.k3)
-        self.energy_ratio_handle = self.handle_generator(self.energy_ratio)
-        self.samples_count_handle = self.handle_generator(self.samples_count)
+        self.xplus_handle = device_put(self.xplus, device=self.device)
+        self.k2_handle = device_put(self.k2, device=self.device)
+        self.k3_handle = device_put(self.k3, device=self.device)
+        self.energy_ratio_handle = device_put(self.energy_ratio, device=self.device)
+        self.samples_count_handle = device_put(self.samples_count, device=self.device)
 
     def precompute_each_harmonic_inverse(self):
         """Pre-compute the inverse of each harmonic."""
@@ -330,31 +357,34 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
         signals_count = last_signal - first_signal
 
         # Pre-allocate memory for the batch
-        signal = jnp.zeros(
+        signal = np.zeros(
             (signals_count, batch_population,
              batch_electrodes_count, self.samples_count),
-            dtype=jnp.float32)
+            dtype=np.float32)
 
-        y_bar_squared = jnp.zeros(
+        y_bar_squared = np.zeros(
             (signals_count, batch_population, self.targets_count,
              batch_electrodes_count, batch_electrodes_count),
-            dtype=jnp.float32)
+            dtype=np.float32)
 
         selected_signals = self.all_signals_handle[first_signal:last_signal]
         selected_ybar = self.y_bar_squared_handles[first_signal:last_signal]
 
         for j in range(batch_population):
             current_selection = self.channel_selections[batch_index]
-            signal = signal.at[:, j].set(selected_signals[:, current_selection, :])
+            signal[:, j] = selected_signals[:, current_selection, :]
             ybar2 = selected_ybar[:, :, current_selection, :]
             ybar2 = ybar2[:, :, :, current_selection]
-            y_bar_squared = y_bar_squared.at[:, j].set(ybar2)
+            y_bar_squared[:, j] = ybar2
             batch_index += 1
 
-        signal = jnp.reshape(signal, (-1,) + signal.shape[2:])
-
-        y_bar_squared = jnp.reshape(
+        signal = np.reshape(signal, (-1,) + signal.shape[2:])
+        y_bar_squared = np.reshape(
             y_bar_squared, (-1,) + y_bar_squared.shape[2:])
+
+        # Convert to jax arrays and transfer to device
+        signal = device_put(jnp.asarray(signal), device=self.device)
+        y_bar_squared = device_put(jnp.asarray(y_bar_squared), device=self.device)
 
         return (signal, y_bar_squared)
 

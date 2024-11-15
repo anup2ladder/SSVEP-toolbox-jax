@@ -10,7 +10,9 @@ Journal of neural engineering 12.4 (2015): 046008.
 from .featureExtractorTemplateMatching import FeatureExtractorTemplateMatching
 
 import jax.numpy as jnp
-from jax import jit, device_put, device_get
+from jax import jit, device_put, devices
+from functools import partial
+import numpy as np
 
 class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
     """Implementation of feature extraction using CCA"""
@@ -72,6 +74,10 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
         """Extract features using CCA"""
         # Get the current batch of data
         signal = self.get_current_data_batch()
+
+        # Transfer data to the desired device
+        signal = device_put(signal, device=self.device)
+
         correlations = self.canonical_correlation_reduced(signal)
 
         if self.max_correlation_only == True:
@@ -109,6 +115,9 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
         signal = signal - jnp.mean(signal, axis=-1)[:, None]
         signal = signal[None, :, :]
 
+        # Transfer data to the desired device
+        signal = device_put(signal, device=self.device)
+
         if self.max_correlation_only == False:
             self.features_count = jnp.min((
                 self.electrodes_count, 2 * self.harmonics_count))
@@ -122,7 +131,6 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
         correlations = jnp.reshape(correlations, (
             1,
             1,
-            1,
             self.targets_count,
             -1))
 
@@ -134,15 +142,15 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
             features = jnp.zeros((
                 1,
                 1,
-                1,
                 self.targets_count,
                 self.features_count),
                 dtype=jnp.float32)
 
-            features = features.at[:, :, :, :, :correlations.shape[-1]].set(correlations)
+            features = features.at[:, :, :, :correlations.shape[-1]].set(correlations)
 
         return features
 
+    @partial(jit, static_argnums=(0,))
     def canonical_correlation_reduced(self, signal):
         """Compute the canonical correlation between X and Y."""
         q_template = self.q_template_handle
@@ -160,29 +168,14 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
 
         return r
 
-    def qr_decomposition(self, X):
-        """QR Decomposition based on Schwarz Rutishauser algorithm"""
-        Q = X
-        ns, m, n = X.shape
-        R = jnp.zeros((ns, n, n), dtype=jnp.float32)
-
-        for k in jnp.arange(n):
-            for i in jnp.arange(k):
-                Qt = Q[:, :, i]
-                R = R.at[:, i, k].set(jnp.sum(Qt * Q[:, :, k], axis=1))
-                product = R[:, i, k][:, None] * Q[:, :, i]
-                Q = Q.at[:, :, k].set(Q[:, :, k] - product)
-
-            R = R.at[:, k, k].set(jnp.sqrt(jnp.sum(Q[:, :, k] ** 2, axis=-1)))
-            Q = Q.at[:, :, k].set(Q[:, :, k] / R[:, k, k][:, None])
-
-        return -Q
-
     def perform_voting_initialization(self):
         """Perform initialization and precomputations common to all voters"""
         # Center data
         self.all_signals = self.all_signals - jnp.mean(self.all_signals, axis=-1)[:, :, None]
-        self.all_signals_handle = self.handle_generator(self.all_signals)
+
+        # Transfer data to the desired device
+        self.all_signals_handle = device_put(self.all_signals, device=self.device)
+
         rank = jnp.linalg.matrix_rank(self.all_signals)
 
         if jnp.any(rank < jnp.min(self.all_signals.shape[1:])):
@@ -217,11 +210,12 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
         if jnp.any(rank_template != 2 * self.harmonics_count):
             self.quit("Template matrix is not full rank.")
 
-        self.template_signal_handle = self.handle_generator(
-            self.template_signal)
+        # Transfer data to the desired device
+        self.template_signal_handle = device_put(
+            self.template_signal, device=self.device)
 
-        self.q_template_handle = self.handle_generator(
-            self.q_template)
+        self.q_template_handle = device_put(
+            self.q_template, device=self.device)
 
     def get_current_data_batch(self):
         """Bundle all data so they can be processed together"""
@@ -234,19 +228,22 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
         signals_count = last_signal - first_signal
 
         # Pre-allocate memory for the batch
-        signal = jnp.zeros(
+        signal = np.zeros(
             (signals_count, batch_population,
              batch_electrodes_count, self.samples_count),
-            dtype=jnp.float32)
+            dtype=np.float32)
 
-        selected_signals = self.all_signals_handle[first_signal:last_signal]
+        selected_signals = device_get(self.all_signals_handle[first_signal:last_signal])
 
-        for j in jnp.arange(batch_population):
+        for j in range(batch_population):
             current_selection = self.channel_selections[batch_index]
-            signal = signal.at[:, j].set(selected_signals[:, current_selection, :])
+            signal[:, j] = selected_signals[:, current_selection, :]
             batch_index += 1
 
-        signal = jnp.reshape(signal, (-1,) + signal.shape[2:])
+        signal = np.reshape(signal, (-1,) + signal.shape[2:])
+
+        # Transfer data to the desired device
+        signal = device_put(jnp.asarray(signal), device=self.device)
 
         return signal
 
