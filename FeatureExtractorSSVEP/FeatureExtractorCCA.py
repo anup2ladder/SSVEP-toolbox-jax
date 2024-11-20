@@ -178,7 +178,10 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
 
         rank = jnp.linalg.matrix_rank(self.all_signals)
 
-        if jnp.any(rank < jnp.min(self.all_signals.shape[1:])):
+        # Get minimum shape
+        min_shape = jnp.min(jnp.array(self.all_signals.shape[1:]))
+
+        if jnp.any(rank < min_shape):
             self.quit("Input signal is not full rank!")
 
         if self.max_correlation_only == False:
