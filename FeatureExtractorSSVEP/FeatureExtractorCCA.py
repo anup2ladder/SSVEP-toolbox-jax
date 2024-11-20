@@ -10,7 +10,7 @@ Journal of neural engineering 12.4 (2015): 046008.
 from .featureExtractorTemplateMatching import FeatureExtractorTemplateMatching
 
 import jax.numpy as jnp
-from jax import jit, device_put, devices
+from jax import jit, device_put, devices, device_get
 from functools import partial
 import numpy as np
 
@@ -81,7 +81,7 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
         correlations = self.canonical_correlation_reduced(signal)
 
         if self.max_correlation_only == True:
-            correlations = jnp.max(correlations, axis=-1)
+            correlations = jnp.max(jnp.array(correlations), axis=-1)
 
         batch_size = self.channel_selection_info_bundle[1]
         signals_count = correlations.shape[0] // batch_size
@@ -119,13 +119,14 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
         signal = device_put(signal, device=self.device)
 
         if self.max_correlation_only == False:
-            self.features_count = jnp.min((
-                self.electrodes_count, 2 * self.harmonics_count))
+            self.features_count = jnp.min(jnp.array(
+                (self.electrodes_count, 2 * self.harmonics_count)
+            ))
 
         correlations = self.canonical_correlation_reduced(signal)
 
         if self.max_correlation_only == True:
-            correlations = jnp.max(correlations, axis=-1)
+            correlations = jnp.max(jnp.array(correlations), axis=-1)
 
         # De-bundle the results.
         correlations = jnp.reshape(correlations, (
@@ -185,8 +186,9 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
             self.quit("Input signal is not full rank!")
 
         if self.max_correlation_only == False:
-            self.features_count = jnp.min((
-                self.electrodes_count, 2 * self.harmonics_count))
+            self.features_count = jnp.min(jnp.array(
+                (self.electrodes_count, 2 * self.harmonics_count)
+            ))
 
     def class_specific_initializations(self):
         """Perform necessary initializations"""

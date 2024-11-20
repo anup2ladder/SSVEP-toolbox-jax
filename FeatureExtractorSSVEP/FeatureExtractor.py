@@ -6,7 +6,7 @@ import sys
 from scipy.signal import sosfiltfilt, butter
 from multiprocessing import Pool
 import numpy as np  # For certain functions not yet supported in JAX
-from jax import device_put, devices
+from jax import device_put, devices, device_get
 
 class FeatureExtractor:
     """A parent class for all feature extraction methods"""
@@ -249,7 +249,7 @@ class FeatureExtractor:
 
             # If less than max_batch_size, select all channel selections
             # Otherwise, pick the first max_batch_size of them.
-            current_size = jnp.min((current_size, self.max_batch_size))
+            current_size = jnp.min(jnp.array((current_size, self.max_batch_size)))
 
             # Save the batch information.
             self.channel_selection_info_bundle = [
@@ -263,9 +263,9 @@ class FeatureExtractor:
             while signal_index < self.signals_count:
                 last_signal_index = signal_index + self.max_batch_size
 
-                last_signal_index = jnp.min(
+                last_signal_index = jnp.min(jnp.array(
                     (last_signal_index, self.signals_count)
-                )
+                ))
 
                 self.channel_selection_info_bundle[3] = signal_index
                 self.channel_selection_info_bundle[4] = last_signal_index

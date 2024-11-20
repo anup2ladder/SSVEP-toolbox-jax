@@ -226,7 +226,7 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
         eigen_vectors = jnp.transpose(eigen_vectors, axes=(0, 1, 3, 2))
 
         # Keep maximum required number of channels
-        max_index = jnp.max(n_s)
+        max_index = jnp.max(jnp.array(n_s))
         eigen_vectors = eigen_vectors[:, :, :, :max_index]
 
         # Compute the projected signal per Eq. (7).
