@@ -7,8 +7,10 @@ synchronization index method for SSVEP-based BCI." Neurocomputing
 """
 
 from .featureExtractorTemplateMatching import FeatureExtractorTemplateMatching
+
 import jax.numpy as jnp
 from jax import jit, device_put, devices
+from functools import partial
 import numpy as np  # For functions not yet supported in JAX
 
 class FeatureExtractorMSI(FeatureExtractorTemplateMatching):

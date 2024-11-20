@@ -8,8 +8,10 @@ interfaces." IEEE transactions on biomedical engineering 54.4 (2007).
 """
 
 from .featureExtractorTemplateMatching import FeatureExtractorTemplateMatching
+
 import jax.numpy as jnp
 from jax import jit, device_put, devices
+from functools import partial
 import numpy as np  # For certain functions not yet supported in JAX
 
 class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
