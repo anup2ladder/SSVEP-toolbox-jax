@@ -66,7 +66,7 @@ class FeatureExtractor:
         self.channel_selection_info_bundle = 0
         self.use_gpu = False
         self.max_batch_size = 16
-        self.explicit_multithreading = 0
+        # self.explicit_multithreading = 0
         self.class_initialization_is_complete = False
         self.device = None  # Device attribute to specify computation device
 
@@ -85,7 +85,7 @@ class FeatureExtractor:
             random_seed=0,
             use_gpu=False,
             max_batch_size=16,
-            explicit_multithreading=0,
+            # explicit_multithreading=0,
             samples_count=0):
         """Set up the parameters of the class"""
         self.harmonics_count = harmonics_count
@@ -101,7 +101,7 @@ class FeatureExtractor:
         self.voters_count = voters_count
         self.use_gpu = use_gpu
         self.max_batch_size = max_batch_size
-        self.explicit_multithreading = explicit_multithreading
+        # self.explicit_multithreading = explicit_multithreading
 
         # Set the computation device based on use_gpu flag
         self.set_device()
@@ -122,7 +122,8 @@ class FeatureExtractor:
     def set_device(self):
         """Set the computation device based on use_gpu flag."""
         if self.use_gpu:
-            gpu_devices = devices("gpu")
+            # gpu_devices = devices("gpu")
+            gpu_devices = devices("METAL")
             if not gpu_devices:
                 self.quit("No GPU device found, but use_gpu is set to True.")
             self.device = gpu_devices[0]
@@ -921,14 +922,15 @@ class FeatureExtractor:
         except (TypeError, ValueError):
             self.quit(message)
 
-        if self.explicit_multithreading > 0 and flag:
-            self.quit(
-                "Cannot set use_gpu to True because explicit_multithreading is set "
-                + "to a positive value. use_gpu is not available when "
-                + "multithreading is enabled.")
+        # if self.explicit_multithreading > 0 and flag:
+        #     self.quit(
+        #         "Cannot set use_gpu to True because explicit_multithreading is set "
+        #         + "to a positive value. use_gpu is not available when "
+        #         + "multithreading is enabled.")
 
         if flag:
-            gpu_devices = devices("gpu")
+            # gpu_devices = devices("gpu")
+            gpu_devices = devices("METAL")
             if not gpu_devices:
                 self.quit(
                     "Cannot set use_gpu to True because no GPU device was found. "
@@ -958,34 +960,34 @@ class FeatureExtractor:
 
         self.__max_batch_size = max_batch_size
 
-    @property
-    def explicit_multithreading(self):
-        """Getter function for the attribute explicit_multithreading"""
-        return self.__explicit_multithreading
+    # @property
+    # def explicit_multithreading(self):
+    #     """Getter function for the attribute explicit_multithreading"""
+    #     return self.__explicit_multithreading
 
-    @explicit_multithreading.setter
-    def explicit_multithreading(self, cores_count):
-        """Setter function for the attribute explicit_multithreading"""
-        message = "explicit_multithreading must be an integer."
+    # @explicit_multithreading.setter
+    # def explicit_multithreading(self, cores_count):
+    #     """Setter function for the attribute explicit_multithreading"""
+    #     message = "explicit_multithreading must be an integer."
 
-        try:
-            cores_count = int(cores_count)
-        except (ValueError, TypeError):
-            self.quit(message)
+    #     try:
+    #         cores_count = int(cores_count)
+    #     except (ValueError, TypeError):
+    #         self.quit(message)
 
-        if cores_count < 0:
-            cores_count = 0
+    #     if cores_count < 0:
+    #         cores_count = 0
 
-        if cores_count >= 2048:
-            self.quit(
-                "explicit_multithreading is too large. Typically "
-                + "this should be the same size as the number of cores "
-                + "or a number in that order.")
+    #     if cores_count >= 2048:
+    #         self.quit(
+    #             "explicit_multithreading is too large. Typically "
+    #             + "this should be the same size as the number of cores "
+    #             + "or a number in that order.")
 
-        if self.use_gpu and cores_count > 0:
-            self.quit(
-                "Cannot set explicit_multithreading when use_gpu "
-                + "is set to True. Multithreading is not supported "
-                + "when using GPUs.")
+    #     if self.use_gpu and cores_count > 0:
+    #         self.quit(
+    #             "Cannot set explicit_multithreading when use_gpu "
+    #             + "is set to True. Multithreading is not supported "
+    #             + "when using GPUs.")
 
-        self.__explicit_multithreading = cores_count
+    #     self.__explicit_multithreading = cores_count
