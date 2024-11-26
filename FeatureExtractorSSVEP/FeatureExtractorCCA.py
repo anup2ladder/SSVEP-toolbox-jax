@@ -44,7 +44,7 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
             random_seed=0,
             use_gpu=False,
             max_batch_size=16,
-            explicit_multithreading=0,
+            # explicit_multithreading=0,
             samples_count=0):
         """
         Setup the feature extractor parameters CCA.
@@ -65,7 +65,7 @@ class FeatureExtractorCCA(FeatureExtractorTemplateMatching):
             random_seed=random_seed,
             use_gpu=use_gpu,
             max_batch_size=max_batch_size,
-            explicit_multithreading=explicit_multithreading,
+            # explicit_multithreading=explicit_multithreading,
             samples_count=samples_count)
 
         self.max_correlation_only = max_correlation_only
