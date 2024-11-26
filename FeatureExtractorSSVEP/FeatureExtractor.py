@@ -480,4 +480,512 @@ class FeatureExtractor:
         [self.signals_count, self.electrodes_count, self.samples_count] =\
             all_signals.shape
 
-    # ... (Other property getters and setters remain largely the same)
+    @property
+    def signals_count(self):
+        """Getter function for the number of signals"""
+        if self._signals_count == 0:
+            self.quit("signals_count "
+                      + self.__parameters_count_setup_guide
+                      + self.__all_signals_setup_guide)
+
+        return self._signals_count
+
+    @signals_count.setter
+    def signals_count(self, signals_count):
+        """Setter function for the number of signals"""
+        error_message = "signals_count must be a non-negative integer. "
+
+        try:
+            signals_count = int(signals_count)
+        except (ValueError, TypeError):
+            self.quit(error_message)
+
+        if signals_count < 0:
+            self.quit(error_message)
+
+        self._signals_count = signals_count
+
+    @property
+    def electrodes_count(self):
+        """Getter function for the number of electrodes"""
+        if self._electrodes_count == 0:
+            self.quit("electrodes_count "
+                      + self.__parameters_count_setup_guide
+                      + self.__all_signals_setup_guide)
+
+        return self._electrodes_count
+
+    @electrodes_count.setter
+    def electrodes_count(self, electrodes_count):
+        """Setter function for the number of electrodes"""
+        error_message = "electrodes_count must be a positive integer. "
+        try:
+            electrodes_count = int(electrodes_count)
+        except (ValueError, TypeError):
+            self.quit(error_message)
+
+        if electrodes_count < 0:
+            self.quit(error_message)
+
+        self._electrodes_count = electrodes_count
+
+    @property
+    def features_count(self):
+        """Getter function for class attribute features_count"""
+        if self.__features_count <= 0:
+            self.quit(
+                "Trying to access features_count before initializing "
+                + "it. ")
+        return self.__features_count
+
+    @features_count.setter
+    def features_count(self, features_count):
+        """Setter function for class attribute features_count"""
+        error_message = ("features_count must be a positive integer. ")
+
+        try:
+            features_count = int(features_count)
+        except(ValueError, TypeError):
+            self.quit(error_message)
+
+        if features_count <= 0:
+            self.quit(error_message)
+
+        self.__features_count = features_count
+
+    @property
+    def samples_count(self):
+        """Getter function for the number of samples"""
+        if self.__samples_count == 0:
+            self.quit("samples_count "
+                      + self.__parameters_count_setup_guide
+                      + self.__all_signals_setup_guide)
+
+        return self.__samples_count
+
+    @samples_count.setter
+    def samples_count(self, samples_count):
+        """Setter function for the number of samples"""
+        error_message = "samples_count must be a positive integer. "
+
+        try:
+            samples_count = int(samples_count)
+        except (ValueError, TypeError):
+            self.quit(error_message)
+
+        if samples_count < 0:
+            self.quit(error_message)
+
+        try:
+            if (self.__samples_count != 0
+                and samples_count != self.__samples_count):
+                self.quit(
+                    "Inconsistent samples count. It seems that the new "
+                    + "samples_count is non-zero and different from the "
+                    + "current samples_count. This has probably happened "
+                    + "because the samples_count variable set in "
+                    + "setup_feature_extractor() is different from the size "
+                    + "of the third dimension of signals provided in "
+                    + "extract_features function. If you do not know the "
+                    + "samples_count before having the signal consider "
+                    + "removing samples_count option in extract_features "
+                    + "function. If you know samples_count before having the "
+                    + "signal, make sure it is consistent with "
+                    + "dimensionality of the signal. ")
+        except(AttributeError):
+            self.__samples_count = samples_count
+            return
+
+        self.__samples_count = samples_count
+
+    @property
+    def embedding_dimension(self):
+        """Getter function for attribute embedding_dimension"""
+        if self.__embedding_dimension == 0 and self.__delay_step != 0:
+            self.quit(self.__embedding_dimension_setup_guide)
+
+        return self.__embedding_dimension
+
+    @embedding_dimension.setter
+    def embedding_dimension(self, embedding_dimension):
+        """Setter function for attribute embedding_dimension"""
+        error_message = "Delay embedding dim. must be a non-negative integer. "
+
+        try:
+            embedding_dimension = int(embedding_dimension)
+        except(TypeError, ValueError):
+            self.quit(error_message)
+
+        if embedding_dimension < 0:
+            self.quit(error_message)
+
+        self.__embedding_dimension = embedding_dimension
+
+    @property
+    def delay_step(self):
+        """Getter function for the attribute delay_step"""
+        if self.__delay_step == 0 and self.__embedding_dimension != 0:
+            self.quit(self.__delay_step_setup_guide)
+
+        return self.__delay_step
+
+    @delay_step.setter
+    def delay_step(self, delay_step):
+        """Setter function for attribute delay_step"""
+        error_message = "Delay step size must be a positive integer. "
+
+        try:
+            delay_step = int(delay_step)
+        except(ValueError, TypeError):
+            self.quit(error_message)
+
+        if delay_step < 0:
+            self.quit(error_message)
+
+        self.__delay_step = delay_step
+
+    @property
+    def filter_order(self):
+        """Getter function for the attribute filter_order"""
+        if self._filter_order == 0 and (
+                self.cutoff_frequency_low != 0 or
+                self.cutoff_frequency_high != 0):
+            self.quit("filter_order is zero but the cutoff frequencies are "
+                      + "non-zero. To use bandpass filtering, set the "
+                      + "filter_order to a positive integer. To not use "
+                      + "bandpass filtering, set the cutoff frequencies to "
+                      + "zero. ")
+
+        return self._filter_order
+
+    @filter_order.setter
+    def filter_order(self, filter_order):
+        """Setter function for the attribute filter_order"""
+        message = "The order of the filter must be a positive integer. "
+
+        try:
+            filter_order = int(filter_order)
+        except(TypeError, ValueError):
+            self.quit(message)
+
+        if filter_order < 0:
+            self.quit(message)
+
+        self._filter_order = filter_order
+
+    @property
+    def cutoff_frequency_low(self):
+        """Getter function for the first cutoff frequency of the filter"""
+        if self.__cutoff_frequency_low > self.__cutoff_frequency_high:
+            self.quit("The first cutoff frequency cannot exceed the "
+                      + "second one. ")
+
+        return self.__cutoff_frequency_low
+
+    @cutoff_frequency_low.setter
+    def cutoff_frequency_low(self, cutoff_frequency):
+        """Setter function for the first cutoff frequency of the filter"""
+        message = "First cutoff frequency must be a positive real number. "
+
+        try:
+            cutoff_frequency = float(cutoff_frequency)
+        except(ValueError, TypeError):
+            self.quit(message)
+
+        if cutoff_frequency < 0:
+            self.quit(message)
+
+        self.__cutoff_frequency_low = cutoff_frequency
+
+    @property
+    def cutoff_frequency_high(self):
+        """Getter function for the second cutoff frequency of the filter"""
+        if self.__cutoff_frequency_low > self.__cutoff_frequency_high:
+            self.quit("The first cutoff frequency cannot exceed the "
+                      + "second one. ")
+
+        return self.__cutoff_frequency_high
+
+    @cutoff_frequency_high.setter
+    def cutoff_frequency_high(self, cutoff_frequency):
+        """Setter function for the second cutoff frequency of the filter"""
+        message = "Second cutoff frequency must be a positive real number. "
+
+        try:
+            cutoff_frequency = float(cutoff_frequency)
+        except(ValueError, TypeError):
+            self.quit(message)
+
+        if cutoff_frequency < 0:
+            self.quit(message)
+
+        self.__cutoff_frequency_high = cutoff_frequency
+
+    @property
+    def sampling_frequency(self):
+        """Getter function for sampling frequency"""
+        if self.__sampling_frequency == 0:
+            self.quit("Sampling frequency is not set. You can setup the "
+                      + " sampling frequency using the sampling_frequency "
+                      + "option of setup_feature_extractor method. ")
+
+        return self.__sampling_frequency
+
+    @sampling_frequency.setter
+    def sampling_frequency(self, frequency):
+        """Setter function for sampling frequency"""
+        error_message = "Sampling frequency must a be a non-negative integer."
+
+        try:
+            frequency = float(frequency)
+        except (TypeError, ValueError):
+            self.quit(error_message)
+
+        if frequency < 0:
+            self.quit(error_message)
+
+        self.__sampling_frequency = frequency
+
+    @property
+    def sos_matrices(self):
+        """Getter function for sos_matrices"""
+        return self.__sos_matrices
+
+    @sos_matrices.setter
+    def sos_matrices(self, matrices):
+        """Setter function for sos_matrices"""
+
+        if matrices is None:
+            self.__sos_matrices = None
+            return
+
+        try:
+            # Assuming matrices are small arrays, keep as NumPy arrays
+            matrices = np.array(matrices, dtype=np.float32)
+        except (ValueError, TypeError, AttributeError):
+            self.quit("SOS matrix of the filter must be an array of floats.")
+
+        self.__sos_matrices = matrices
+
+    @property
+    def subbands(self):
+        """Getter function for class attribute subbands"""
+        return self.__subbands
+
+    @subbands.setter
+    def subbands(self, subbands):
+        """Setter function for class attribute subbands"""
+        message = ("Subbands must be a matrix of real nonnegative "
+                   + "numbers. Each row corresponds to one subband. Each "
+                   + "row must have two columns, where the first column is "
+                   + "the first cutoff frequency and the second column is "
+                   + "the second cutoff frequency. The entry in the second "
+                   + "must be larger than the entry in the first column "
+                   + "for each row.")
+
+        if subbands is None:
+            self.__subbands = None
+            self.is_filterbank = False
+            self.subbands_count = 1
+            return
+
+        # Check if subbands is an array
+        try:
+            subbands = jnp.array(subbands, dtype=jnp.float32)
+        except (ValueError, TypeError, AttributeError):
+            self.quit(message)
+
+        # subbands must be a 2D array
+        if (subbands < 0).any() or subbands.ndim != 2:
+            self.quit(message)
+
+        # Check if all second cutoff frequencies are larger than first ones
+        if (subbands[:, 0] >= subbands[:, 1]).any():
+            self.quit("Second cutoff frequency must exceed the first one for each subband.")
+
+        # Determine if filterbank is to be used
+        if jnp.sum(subbands) == 0:
+            self.is_filterbank = False
+        else:
+            self.is_filterbank = True
+
+        self.subbands_count = subbands.shape[0]
+        self.__subbands = subbands
+
+    @property
+    def subbands_count(self):
+        """Getter function for class attribute subbands_count"""
+        return self.__subbands_count
+
+    @subbands_count.setter
+    def subbands_count(self, subbands_count):
+        """Setter function for the attribute subbands_count"""
+        message = "The number of subbands must be a positive integer."
+
+        if subbands_count is None:
+            self.__subbands_count = 1
+            return
+
+        try:
+            subbands_count = int(subbands_count)
+        except(ValueError, TypeError):
+            self.quit(message)
+
+        if subbands_count <= 0:
+            self.quit(message)
+
+        self.__subbands_count = subbands_count
+
+    @property
+    def voters_count(self):
+        """Getter function for class attribute voters_count"""
+        return self.__voters_count
+
+    @voters_count.setter
+    def voters_count(self, voters_count):
+        """Setter function for the attribute voters_count"""
+        message = "The number of voters must be a positive integer."
+
+        if voters_count is None:
+            self.__voters_count = 1
+            return
+
+        try:
+            voters_count = int(voters_count)
+        except(ValueError, TypeError):
+            self.quit(message)
+
+        if voters_count <= 0:
+            self.quit(message)
+
+        self.__voters_count = voters_count
+
+    @property
+    def random_seed(self):
+        """Getter function for the attribute random_seed"""
+        return self.__random_seed
+
+    @random_seed.setter
+    def random_seed(self, random_seed):
+        """Setter function for the attribute random_seed"""
+        message = "random seed must be a non negative integer."
+
+        if random_seed is None:
+            self.__random_seed = 0
+            return
+
+        try:
+            random_seed = int(random_seed)
+        except(TypeError, ValueError):
+            self.quit(message)
+
+        if random_seed < 0:
+            self.quit(message)
+
+        self.__random_seed = random_seed
+
+    @property
+    def channel_selections(self):
+        """Getter function for the attribute channel_selections"""
+        return self.__channel_selections
+
+    @channel_selections.setter
+    def channel_selections(self, channel_selections):
+        """Setter function for the attribute channel_selections"""
+        message = ("channel selections is not set properly. Do not set "
+                   + "up this variable directly.  ")
+
+        if channel_selections is None:
+            self.__channel_selections = None
+            return
+
+        try:
+            channel_selections = jnp.array(channel_selections, dtype=bool)
+        except (TypeError, ValueError):
+            self.quit(message)
+
+        self.__channel_selections = channel_selections
+
+    @property
+    def use_gpu(self):
+        """Getter function for the attribute use_gpu"""
+        return self.__use_gpu
+
+    @use_gpu.setter
+    def use_gpu(self, flag):
+        """Setter function for the attribute use_gpu"""
+        message = "Cannot set use_gpu. use_gpu flag must either True or False."
+
+        try:
+            flag = bool(flag)
+        except (TypeError, ValueError):
+            self.quit(message)
+
+        if self.explicit_multithreading > 0 and flag:
+            self.quit(
+                "Cannot set use_gpu to True because explicit_multithreading is set "
+                + "to a positive value. use_gpu is not available when "
+                + "multithreading is enabled.")
+
+        if flag:
+            gpu_devices = devices("gpu")
+            if not gpu_devices:
+                self.quit(
+                    "Cannot set use_gpu to True because no GPU device was found. "
+                    + "Please ensure you have a CUDA-capable GPU and JAX is configured properly.")
+
+        self.__use_gpu = flag
+        # Update device
+        self.set_device()
+
+    @property
+    def max_batch_size(self):
+        """Getter function for the attribute max_batch_size"""
+        return self.__max_batch_size
+
+    @max_batch_size.setter
+    def max_batch_size(self, max_batch_size):
+        """Setter function for the attribute max_batch_size"""
+        message = "max_batch_size must be a positive integer."
+
+        try:
+            max_batch_size = int(max_batch_size)
+        except (ValueError, TypeError):
+            self.quit(message)
+
+        if max_batch_size <= 0:
+            self.quit(message)
+
+        self.__max_batch_size = max_batch_size
+
+    @property
+    def explicit_multithreading(self):
+        """Getter function for the attribute explicit_multithreading"""
+        return self.__explicit_multithreading
+
+    @explicit_multithreading.setter
+    def explicit_multithreading(self, cores_count):
+        """Setter function for the attribute explicit_multithreading"""
+        message = "explicit_multithreading must be an integer."
+
+        try:
+            cores_count = int(cores_count)
+        except (ValueError, TypeError):
+            self.quit(message)
+
+        if cores_count < 0:
+            cores_count = 0
+
+        if cores_count >= 2048:
+            self.quit(
+                "explicit_multithreading is too large. Typically "
+                + "this should be the same size as the number of cores "
+                + "or a number in that order.")
+
+        if self.use_gpu and cores_count > 0:
+            self.quit(
+                "Cannot set explicit_multithreading when use_gpu "
+                + "is set to True. Multithreading is not supported "
+                + "when using GPUs.")
+
+        self.__explicit_multithreading = cores_count
