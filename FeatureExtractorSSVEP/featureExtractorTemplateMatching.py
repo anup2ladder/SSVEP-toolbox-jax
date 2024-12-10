@@ -42,38 +42,28 @@ class FeatureExtractorTemplateMatching(FeatureExtractor):
           
     def compute_templates(self):
         """Pre-compute the template signals for all target frequencies"""
-        # Template must have the same length as the signal.
-        t = np.arange(1, self.samples_count+1)
+        xp = self.backend.xp
         
-        # Dividing by the sampling frequency returns the actual
-        # time in seconds.
+        # Template must have the same length as the signal.
+        t = xp.arange(1, self.samples_count+1)
+        
+        # Dividing by the sampling frequency returns the actual time in seconds.
         t = t/self.sampling_frequency
         
-        # Pre-compute the template signal.  This generates a 4D array.  
-        # Index the first dimension to access the target.  Index the 
-        # second dimension to access harmonics.  Index the third dimension
-        # to access either sine or cosine.  Index the fourth dimension to
-        # access samples. 
-        template_signal = np.array(
-            [[(np.sin(2*np.pi*t*f*h), np.cos(2*np.pi*t*f*h))
+        # Pre-compute the template signal.
+        template_signal = xp.array(
+            [[(xp.sin(2*xp.pi*t*f*h), xp.cos(2*xp.pi*t*f*h))
              for h in range(1, self.harmonics_count+1)]
              for f in self.targets_frequencies])
         
-        # Reshape template_signal into a 3D array, where the first dimension
-        # indexes targets, the second dimension indexes harmonics and 
-        # sine/cosine, and the third dimension indexes samples. 
-        # The first enetry of the second dimension is the sine wave of the 
-        # fundamental frequency, the second entry is the cosine wave of the 
-        # fundamental frequency, the third entry is the sine wave of the first
-        # harmonic, the fourth entry is the cosine wave of the first harmonic,
-        # and so on. 
-        self.template_signal = np.reshape(
+        # Reshape template_signal into a 3D array
+        self.template_signal = xp.reshape(
             template_signal, 
             (self.targets_count,
              self.harmonics_count*2,
              self.samples_count))
         
-        self.template_signal = np.transpose(
+        self.template_signal = xp.transpose(
             self.template_signal, axes=(0, 2, 1))
         
     @property

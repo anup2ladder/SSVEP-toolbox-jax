@@ -4,13 +4,65 @@ import numpy as np
 import sys
 from scipy.signal import sosfiltfilt, butter
 from multiprocessing import Pool
+import platform
 
+# Try importing CuPy for NVIDIA GPU support
 try:
     import cupy as cp
     cupy_available_global = True
-except:
+except ImportError:
     cupy_available_global = False
     cp = np
+
+# Try importing MLX for Apple Silicon GPU support
+try:
+    import mlx.core as mx
+    mlx_available_global = platform.processor() == 'arm' and platform.system() == 'Darwin'
+except ImportError:
+    mlx_available_global = False
+    mx = np
+
+class BackendManager:
+    """Manages array computation backend selection and operations"""
+    
+    def __init__(self, use_gpu=False):
+        self.use_gpu = use_gpu
+        self._setup_backend()
+        
+    def _setup_backend(self):
+        """Initialize the appropriate backend based on hardware and availability"""
+        if not self.use_gpu:
+            self.backend = 'numpy'
+            self.xp = np
+            return
+            
+        # Check for Apple Silicon first
+        if mlx_available_global:
+            self.backend = 'mlx'
+            self.xp = mx
+        # Then check for NVIDIA GPU
+        elif cupy_available_global:
+            self.backend = 'cupy'
+            self.xp = cp
+        else:
+            self.backend = 'numpy'
+            self.xp = np
+            
+    def to_numpy(self, array):
+        """Convert array to numpy if needed"""
+        if self.backend == 'cupy':
+            return cp.asnumpy(array)
+        elif self.backend == 'mlx':
+            return array.numpy()
+        return array
+    
+    def to_device(self, array):
+        """Convert numpy array to device array"""
+        if self.backend == 'cupy':
+            return cp.asarray(array)
+        elif self.backend == 'mlx':
+            return mx.array(array)
+        return array
     
 
 class FeatureExtractor:
@@ -185,6 +237,17 @@ class FeatureExtractor:
             self.devices_count = cp.cuda.runtime.getDeviceCount()
         else:
             self.devices_count = 0
+            
+        # Initialize backend manager
+        self.backend = BackendManager()
+        
+        # Update device detection
+        if cupy_available_global:
+            self.nvidia_devices_count = cp.cuda.runtime.getDeviceCount()
+        else:
+            self.nvidia_devices_count = 0
+            
+        self.has_apple_silicon = mlx_available_global
             
     def build_feature_extractor(
             self, 
@@ -677,10 +740,7 @@ class FeatureExtractor:
             
     def get_array_module(self, array):
         """Return the module of the array even if failed to import cupy"""
-        if self.use_gpu == False:
-            return np
-        else:
-            return cp.get_array_module(array)
+        return self.backend.xp
         
     def filterbank_standard_aggregator(self, features, a=1.25, b=0.25, axis=1):
         """
@@ -1225,6 +1285,7 @@ class FeatureExtractor:
                 + "in setup_feature_extractor() function to false. ")                
             
         self.__use_gpu = flag
+        self.backend = BackendManager(flag)
         
     @property
     def max_batch_size(self):
