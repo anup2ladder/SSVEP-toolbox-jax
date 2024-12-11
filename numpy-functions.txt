@@ -356,3 +356,23 @@ This approach:
 Would you like me to show how to adapt the feature extractor classes to use this improved backend?
 
 Made changes.
+
+----------------
+
+Looking at the MLX documentation and source code:
+
+Key Linear Algebra Operations with GPU Limitations in MLX:
+
+QR Decomposition (qr) - Not implemented for GPU, CPU only
+SVD (Singular Value Decomposition) - Not implemented for GPU, CPU only
+eigh (Eigenvalue decomposition for Hermitian matrices) - Not implemented for GPU, CPU only
+Matrix Rank - Not directly implemented, has to be computed via SVD
+Other Important Linear Algebra Operations that ARE GPU-accelerated in MLX:
+
+Matrix multiplication (matmul, @)
+Basic linear algebra operations (add, multiply, etc.)
+Matrix inversions
+Matrix transposes
+Solve linear equations
+Vector/matrix norms
+Dot products
