@@ -5,31 +5,23 @@ Zhang, Yangsong, et al. "The extension of multivariate
 synchronization index method for SSVEP-based BCI." Neurocomputing
 269 (2017): 226-231
 """
-# Import the definition of the parent class.  Make sure the file is in the
-# working directory. 
-from .featureExtractorTemplateMatching \
-    import FeatureExtractorTemplateMatching
-
-# Needed for many matrix computations.
-import numpy as np
-
-try:
-    import cupy as cp
-    cupy_available_global = True
-except:
-    cupy_available_global = False
-    cp = np
+from .featureExtractorTemplateMatching import FeatureExtractorTemplateMatching
+import mlx.core as mx  # Main MLX library
+import numpy as np  # Still needed for some operations
 
 class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
     """Class of MSI feature extractor"""
     
     def __init__(self):        
-         """MSI feature extractor class constructor"""         
-         super().__init__()
+        """MSI feature extractor class constructor"""         
+        super().__init__()
+        
+        # Force CPU usage with MLX for this instance
+        mx.set_default_device(mx.cpu)
                  
-         # This is the covariance matrix of the template SSVEP. 
-         # We can pre-compute this once to improve performance.
-         self.C22 = 0
+        # This is the covariance matrix of the template SSVEP. 
+        # We can pre-compute this once to improve performance.
+        self.C22 = 0
          
     def setup_feature_extractor(
             self, 
@@ -184,13 +176,12 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
                         
     def get_features(self, device):
         """Extract MSI features (synchronization indexes) from signal"""                          
-        signal = self.get_current_data_batch()        
-        xp = self.get_array_module(signal)
+        signal = self.get_current_data_batch()
         
-        features = self.compute_synchronization_index(signal, device)
+        features = self.compute_synchronization_index(signal)
         batch_size = self.channel_selection_info_bundle[1]
         
-        features = xp.reshape(features, (
+        features = mx.reshape(features, (
             features.shape[0]//batch_size,
             batch_size,
             self.targets_count,
@@ -200,13 +191,13 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
     
     def get_features_multithreaded(self, signal):
         """Extract MSI features from a single signal"""        
-        # Make sure signal is 3D
-        signal -= np.mean(signal, axis=-1)[:, None]
+        # Make sure signal is 3D and centered
+        signal = signal - mx.mean(signal, axis=-1)[:, None]
         signal = signal[None, :, :] 
-        features = self.compute_synchronization_index(signal, device=0)  
+        features = self.compute_synchronization_index(signal)  
 
-        # De-bundle the results.
-        features = np.reshape(features, (
+        # De-bundle the results
+        features = mx.reshape(features, (
             1, 
             1,
             1,
@@ -216,101 +207,99 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
           
         return features
     
-    def compute_synchronization_index(self, signal, device):
-        """Compute the synchronization index between signal and templates"""        
-        xp = self.get_array_module(signal)        
+    def compute_synchronization_index(self, signal):
+        """Compute synchronization index between signal and templates"""
         electrodes_count = signal.shape[1]        
-        r_matrix = self.compute_r(signal, device)        
+        r_matrix = self.compute_r(signal)        
         
-        # Keep only the first output of the function
-        eigen_values = xp.linalg.eigh(r_matrix)[0]
-        eigen_values = (eigen_values / (
-            2*self.harmonics_count_handle[device]+electrodes_count)
-            )
+        # Get eigenvalues and normalize
+        eigen_values = mx.linalg.eigh(r_matrix)[0]
+        eigen_values = eigen_values / (2 * self.harmonics_count_handle[0] + electrodes_count)
 
-        score = xp.multiply(eigen_values, xp.log(eigen_values))
-        score = xp.sum(score, axis=-1)
-        score = score / xp.log(r_matrix.shape[-1])
-        score += 1
+        # Compute synchronization score
+        score = mx.multiply(eigen_values, mx.log(eigen_values))
+        score = mx.sum(score, axis=-1)
+        score = score / mx.log(r_matrix.shape[-1])
+        score = score + 1
         return score
       
-    def compute_r(self, signal, device):
+    def compute_r(self, signal):
         """Compute matrix C as explained in Eq. (7)"""
-        xp = self.get_array_module(signal)
-        C11 = self.get_data_covariance(signal, device)
+        C11 = self.get_data_covariance(signal)
         
-        C11 = xp.expand_dims(C11, axis=1)
-        signal = xp.expand_dims(signal, axis=1)
+        # Add batch dimension
+        C11 = mx.expand_dims(C11, axis=1)
+        signal = mx.expand_dims(signal, axis=1)
         
-        C12 = xp.matmul(
-            signal, (self.template_signal_handle[device])[None, :, :, :])
+        # Compute cross-covariance
+        C12 = mx.matmul(
+            signal, self.template_signal_handle[0][None, :, :, :])
                        
-        C12 = C12 / self.samples_count_handle[device]
+        C12 = C12 / self.samples_count_handle[0]
         electrodes_count = C11.shape[-1]
         
-        # Eq. (6)
-        upper_left = xp.matmul(C11, C12)
-        upper_left = xp.matmul(upper_left, self.C22_handle[device])
+        # Eq. (6) - Construct block matrix
+        upper_left = mx.matmul(C11, C12)
+        upper_left = mx.matmul(upper_left, self.C22_handle[0])
         
-        lower_right = xp.matmul(
-            self.C22_handle[device], xp.transpose(C12, axes=[0, 1, 3, 2]))
+        lower_right = mx.matmul(
+            self.C22_handle[0], mx.transpose(C12, (0, 1, 3, 2)))
         
-        lower_right = xp.matmul(lower_right, C11)        
-        eye1 = xp.eye(electrodes_count, dtype=xp.float32)   
+        lower_right = mx.matmul(lower_right, C11)        
         
-        eye1 = eye1 + xp.zeros(
-            upper_left.shape[0:2] + eye1.shape, dtype=xp.float32)
+        # Create identity matrices
+        eye1 = mx.eye(electrodes_count, dtype=mx.float32)   
+        eye1 = eye1 + mx.zeros(
+            upper_left.shape[0:2] + eye1.shape, dtype=mx.float32)
         
-        eye2 = xp.eye(C12.shape[-1], dtype=xp.float32)
+        eye2 = mx.eye(C12.shape[-1], dtype=mx.float32)
+        eye2 = eye2 + mx.zeros(
+            upper_left.shape[0:2] + eye2.shape, dtype=mx.float32)
         
-        eye2 = eye2 + xp.zeros(
-            upper_left.shape[0:2] + eye2.shape, dtype=xp.float32)
-        
-        part1 = xp.concatenate((eye1, upper_left), axis=-1)
-        part2 = xp.concatenate((lower_right, eye2), axis=-1)
-        r_matrix = xp.concatenate((part1, part2), axis=-2)
+        # Concatenate to form final matrix
+        part1 = mx.concatenate((eye1, upper_left), axis=-1)
+        part2 = mx.concatenate((lower_right, eye2), axis=-1)
+        r_matrix = mx.concatenate((part1, part2), axis=-2)
        
-        return xp.real(r_matrix)
+        return mx.real(r_matrix)
                 
-    def get_data_covariance(self, signal, device):
-        """Compute the covariance of data per Eq. (3) and Eq. (6)"""
-        xp = self.get_array_module(signal)
-        C11 = xp.matmul(signal, xp.transpose(signal, axes=(0, 2, 1)))
-        C11 = C11 / self.samples_count_handle[device]
-        C11 = xp.linalg.inv(C11)
+    def get_data_covariance(self, signal):
+        """Compute covariance of data per Eq. (3) and Eq. (6)"""
+        # Compute raw covariance
+        C11 = mx.matmul(signal, mx.transpose(signal, (0, 2, 1)))
+        C11 = C11 / self.samples_count_handle[0]
+        
+        # Invert and take matrix square root
+        C11 = mx.linalg.inv(C11)
         C11 = self.matrix_square_root(C11)
         return C11
     
     def matrix_square_root(self, A):
-        """Compute the square root of a matrix using ev decomposition"""
-        xp = self.get_array_module(A)
-        w, v = xp.linalg.eigh(A)
-        D = xp.zeros(A.shape, dtype=xp.float32)        
-        w = xp.sqrt(w)
+        """Compute matrix square root using eigenvalue decomposition"""
+        w, v = mx.linalg.eigh(A)
+        D = mx.zeros(A.shape, dtype=mx.float32)        
+        w = mx.sqrt(w)
         
-        for i in xp.arange(w.shape[-1]):
-            D[:, i, i] = w[:, i]
+        # Build diagonal matrix
+        for i in range(w.shape[-1]):
+            D = D.at[:, i, i].set(w[:, i])
             
-        sqrt_A = xp.matmul(xp.matmul(v, D), xp.linalg.inv(v))
+        sqrt_A = mx.matmul(mx.matmul(v, D), mx.linalg.inv(v))
         return sqrt_A
             
     def perform_voting_initialization(self, device=0):
-        """Perform initialization and precomputations common to all voters"""
+        """Initialize voting operations"""
         # Center data
-        self.all_signals -= np.mean(self.all_signals, axis=-1)[:, :, None]        
+        self.all_signals = self.all_signals - mx.mean(self.all_signals, axis=-1)[:, :, None]        
         self.all_signals_handle = self.handle_generator(self.all_signals)
                    
     def class_specific_initializations(self):
         """Perform necessary initializations"""
-        # Perform some percomputations only in the first run.  
-        # These computations only rely on the template signal and can thus
-        # be pre-computed to improve performance. 
+        # Pre-compute template signal
         self.compute_templates()  
         self.precompute_template_covariance()
         
-        # Create handles
-        # Handles make it easier to expand the algorithm to work with
-        # multiple CPUs or GPUs
+        # Create handles for pre-computed values
         self.template_signal_handle = self.handle_generator(
             self.template_signal) 
         self.C22_handle = self.handle_generator(self.C22)
@@ -318,31 +307,26 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
         self.harmonics_count_handle = self.handle_generator(
             self.harmonics_count)
         
-        # It is important to cast these to float32.
-        # Otherwise, cupy casts the results back to float64 when dividing
-        # float32 by int32.
+        # Cast to float32 to avoid type mismatches
         self.samples_count_handle = self.handle_generator(
-            np.float32(self.samples_count))
+            mx.array(float(self.samples_count), dtype=mx.float32))
         
     def precompute_template_covariance(self):
-        """Pre-compute and save the covariance matrix of the template"""
-        # Eq. (4)
-        C22 = np.matmul(            
-            np.transpose(self.template_signal, axes=[0, 2, 1]),
+        """Pre-compute and save template covariance matrix"""
+        # Compute covariance per Eq. (4)
+        C22 = mx.matmul(            
+            mx.transpose(self.template_signal, (0, 2, 1)),
             self.template_signal)
         
         C22 = C22 / self.samples_count
         
-        # Eq. (6)
-        C22 = np.linalg.inv(C22)            
+        # Apply Eq. (6)
+        C22 = mx.linalg.inv(C22)            
         self.C22 = self.matrix_square_root(C22)      
                
     def get_current_data_batch(self):
-        """Bundle all data so they can be processed toegher"""
-        # Bundling helps increase GPU and CPU utilization. 
-       
-        # Extract bundle information. 
-        # Helps with the code's readability. 
+        """Bundle data for batch processing"""
+        # Extract bundle info
         batch_index = self.channel_selection_info_bundle[0]        
         batch_population = self.channel_selection_info_bundle[1]
         batch_electrodes_count = self.channel_selection_info_bundle[2]
@@ -350,23 +334,21 @@ class FeatureExtractorMSI(FeatureExtractorTemplateMatching):
         last_signal = self.channel_selection_info_bundle[4]
         signals_count = last_signal - first_signal
         
-        # Pre-allocate memory for the batch
-        signal = np.zeros(
+        # Pre-allocate batch memory
+        signal = mx.zeros(
             (signals_count, batch_population,
              batch_electrodes_count, self.samples_count),
-            dtype=np.float32)        
+            dtype=mx.float32)        
         
         selected_signals = self.all_signals_handle[0][first_signal:last_signal]
         
-        for j in np.arange(batch_population):
+        # Fill batch with selected signals
+        for j in range(batch_population):
             current_selection = self.channel_selections[batch_index]
-            signal[:, j] = selected_signals[:, current_selection, :]
+            signal = signal.at[:, j].set(
+                selected_signals[:, current_selection, :])
             batch_index += 1
                         
-        signal = np.reshape(signal, (-1,) + signal.shape[2:])
-          
-        # Move the extracted batches to the device memory if need be. 
-        if self.use_gpu == True:          
-            signal = cp.asarray(signal)
-            
+        signal = mx.reshape(signal, (-1,) + signal.shape[2:])
+        
         return signal

@@ -1,30 +1,14 @@
 # featureExtractorMEC.py
 """
-Implementation of MEC feature extraction method
-# Feature extraction method using minimum energy combination based on:
-# Friman, Ola, Ivan Volosyak, and Axel Graser. "Multiple channel
-# detection of steady-state visual evoked potentials for brain-computer
-# interfaces." IEEE transactions on biomedical engineering 54.4 (2007).
+Implementation of MEC feature extraction method.
+Feature extraction method using minimum energy combination based on:
+Friman, Ola, Ivan Volosyak, and Axel Graser. "Multiple channel
+detection of steady-state visual evoked potentials for brain-computer
+interfaces." IEEE transactions on biomedical engineering 54.4 (2007).
 """
-# Import the definition of the parent class.  Make sure the file is in the
-# working directory.  
-from .featureExtractorTemplateMatching \
-    import FeatureExtractorTemplateMatching
-
-# Needed for many matrix computations
-import numpy as np
-
-try:
-    import cupy as cp
-    cupy_available_global = True
-except:
-    cupy_available_global = False
-    cp = np
-
-# # A custom CUDA kernel for sum of products.
-# @cp.fuse(kernel_name='sum_of_products')
-# def sum_of_products(x, y):
-#     return cp.sum(x * y, axis = -1)
+from .featureExtractorTemplateMatching import FeatureExtractorTemplateMatching
+import mlx.core as mx  # Main MLX library
+import numpy as np     # Still needed for some operations
 
 class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
     """Class of minimum energy combination feature extractor"""
@@ -33,8 +17,11 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
         """MEC feature extractor class constructor"""
         super().__init__()
         
+        # Force CPU usage with MLX for this instance
+        mx.set_default_device(mx.cpu)
+        
         # The order of the AR model used for estimating noise energy.
-        # This must be a single positive integer.  The order of the AR cannot
+        # This must be a single positive integer. The order of the AR cannot
         # be more than the signal length. 
         self.ar_order = 15
         
@@ -45,42 +32,8 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
         # A temporary pre-computed value. 
         self.xplus = 0
         
-        # The psudo-inverse of each [sine, cosine] pair for each harmonic
+        # The pseudo-inverse of each [sine, cosine] pair for each harmonic
         self.sub_template_inverse = 0   
-        
-        if cupy_available_global == True:
-            # CUDA kernel for computing sum of products. 
-            self.sum_product_raw = cp.RawKernel(
-                r'''
-                extern "C" __global__
-                void sum_product_raw(const float* const timeSeries,
-                    const int batchSize, 
-                    const int signalSize,
-                    const int arraySize,
-                    const int offset,
-                    float* const results)
-                {     
-                  const int p = blockIdx.y;
-                  const int batchId = blockIdx.x * blockDim.x + threadIdx.x;
-                  const int index = batchId*batchSize - blockIdx.x*offset;
-                  
-                  if (index >= arraySize)
-                      return;
-                    
-                  const int blockId = blockIdx.y * gridDim.x + blockIdx.x;
-                  const int threadId = blockId * blockDim.x + threadIdx.x;                   
-
-                  for (int i = 0; i < batchSize; i++) 
-                  {
-                      if (threadIdx.x*batchSize+i+p >= signalSize)
-                          break;          
-            
-                       results[threadId] += 
-                           timeSeries[index+i] * timeSeries[index+i+p];           
-                  } // end for i
-                  
-                } // end kernel sum_product_raw
-                ''', 'sum_product_raw')
        
     def setup_feature_extractor(
             self, 
@@ -251,21 +204,18 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
     def get_features(self, device):
         """Extract MEC features (SNRs) from signal"""    
         # Extract current batch of data
-        (signal, y_bar_squared) = self.get_current_data_batch()
-                
-        xp = self.get_array_module(signal)
+        signal, y_bar_squared = self.get_current_data_batch()
         
-        # Swap the dimensions for samples and electrodes to make the 
-        # implementation consistent with the reference.
-        signal = xp.transpose(signal, axes=(0, 2, 1))         
+        # Swap dimensions for samples and electrodes
+        signal = mx.transpose(signal, (0, 2, 1))         
         
         # Extract SNRs                   
-        features = self.compute_snr(signal, y_bar_squared, device)
+        features = self.compute_snr(signal, y_bar_squared)
                
         batch_size = self.channel_selection_info_bundle[1]
         
-        # De-bundle the results.
-        features = xp.reshape(features, (
+        # De-bundle the results
+        features = mx.reshape(features, (
             features.shape[0]//batch_size,
             batch_size,
             self.targets_count,
@@ -276,25 +226,23 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
     
     def get_features_multithreaded(self, signal):
         """Extract MEC features (SNRs) from signal"""        
-        # signal is an E by T 2D array, where T is the number
-        # of samples and E is the number of electrodes.  Thus, we must
-        # transpose to make it T by E. 
-        signal -= np.mean(signal, axis=-1)[:, None]
-        signal /= np.std(signal, axis=-1)[:, None]
-        signal = np.transpose(signal)
+        # Normalize signal
+        signal = signal - mx.mean(signal, axis=-1)[:, None]
+        signal = signal / mx.std(signal, axis=-1)[:, None]
+        signal = mx.transpose(signal)
         signal = signal[None, :, :]
         
         # Compute Ybar per Eq. (9)
-        y_bar = signal - np.matmul(self.xplus, signal)
+        y_bar = signal - mx.matmul(self.xplus, signal)
         
-        y_bar_squared = np.matmul(
-            np.transpose(y_bar, axes=(0, 2, 1)), y_bar)
+        y_bar_squared = mx.matmul(
+            mx.transpose(y_bar, (0, 2, 1)), y_bar)
         
         y_bar_squared = y_bar_squared[None, :, :, :]                             
-        features = self.compute_snr(signal, y_bar_squared, device=0)    
+        features = self.compute_snr(signal, y_bar_squared)    
 
-        # De-bundle the results.
-        features = np.reshape(features, (
+        # De-bundle the results
+        features = mx.reshape(features, (
             1, 
             1,
             1,
@@ -302,260 +250,199 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
             1))        
         return features
        
-    def compute_snr(self, signal, y_bar_squared, device):
+    def compute_snr(self, signal, y_bar_squared):
         """Compute the SNR"""         
-        xp = self.get_array_module(signal)
+        # Project signal to minimize nuisance power
+        projected_signal, n_s = self.project_signal(signal, y_bar_squared)    
         
-        # Project the signal to minimize the power of nuisance signal
-        (projected_signal, n_s) = self.project_signal(
-            signal, y_bar_squared, device)    
+        # Compute signal power
+        template = self.template_signal_handle[0][None, :, :, :]
+        template = mx.transpose(template, (0, 1, 3, 2))
+        power = mx.matmul(template, projected_signal)
+        power = mx.square(power)
         
-        # Computer the signal power
-        template = self.template_signal_handle[device][None, :, :, :]
-        template = xp.transpose(template, axes=(0, 1, 3, 2))
-        power = xp.matmul(template, projected_signal)
-        power = xp.square(power)
-        
-        # The following is a trick to add each row of the matrix to the row 
-        # below it and save it in the top row. One row is for the sine and
-        # the other is for the cosine.
-        power = power + xp.roll(power, -1, axis=2)
+        # Add each row to row below it and save in top row
+        # One row for sine, one for cosine
+        power = power + mx.roll(power, -1, axis=2)
         power = power[:, :, 0:-1:2]
-        power = xp.transpose(power, axes=(2, 0, 1, 3))    
+        power = mx.transpose(power, (2, 0, 1, 3))    
 
-        x_inverse_signal = xp.matmul(
-            self.sub_template_inverse_handle[device][:, None, :, :, :], 
+        x_inverse_signal = mx.matmul(
+            self.sub_template_inverse_handle[0][:, None, :, :, :], 
             projected_signal[None, :, :, :, :])
         
-        x = xp.reshape(
-            self.template_signal_handle[device], 
-            self.template_signal_handle[device].shape[0:-1] + (-1, 2))
+        x = mx.reshape(
+            self.template_signal_handle[0], 
+            self.template_signal_handle[0].shape[0:-1] + (-1, 2))
         
-        x = xp.transpose(x, (2, 0, 1, 3))
-        s_bar = xp.matmul(x[:, None, : , :, :], x_inverse_signal)
-        s_bar = projected_signal[None, :, :, :, :] -  s_bar
-        s_bar = xp.transpose(s_bar, axes=(0, 1, 2, 4, 3))        
+        x = mx.transpose(x, (2, 0, 1, 3))
+        s_bar = mx.matmul(x[:, None, : , :, :], x_inverse_signal)
+        s_bar = projected_signal[None, :, :, :, :] - s_bar
+        s_bar = mx.transpose(s_bar, (0, 1, 2, 4, 3))        
         
-        # Extract the noise energy
-        coefficients, noise_energy = self.yule_walker(s_bar, device)
-        sigma_bar = self.k2 * noise_energy        
-        denominator = xp.zeros(coefficients.shape[0:-1], dtype=np.cdouble)
-        coefficients = xp.transpose(coefficients, axes=(3, 0, 1, 2, 4))
-        coefficients *= -1
+        # Extract noise energy 
+        coefficients, noise_energy = self.yule_walker(s_bar)
+        sigma_bar = self.k2_handle[0] * noise_energy
         
-        coefficients = xp.multiply(
-            coefficients, self.k3_handle[device][None, :, None, :, :])
+        # Initialize denominator with complex zeros
+        denominator = mx.zeros(coefficients.shape[0:-1], dtype=mx.float32)
+        coefficients = mx.transpose(coefficients, (3, 0, 1, 2, 4))
+        coefficients = coefficients * -1
         
-        denominator = xp.sum(coefficients, axis=-1)
-        denominator = xp.transpose(denominator, axes=(1, 2, 3, 0))
-        denominator = xp.abs(1 + denominator)
-        sigma_bar /= denominator
+        coefficients = mx.multiply(
+            coefficients, self.k3_handle[0][None, :, None, :, :])
+        
+        denominator = mx.sum(coefficients, axis=-1)
+        denominator = mx.transpose(denominator, (1, 2, 3, 0))
+        denominator = mx.abs(1 + denominator) 
+        sigma_bar = sigma_bar / denominator
         power = power / sigma_bar
         
-        # For each signal, only keep the first n_s number of channels.
-        snrs = xp.sum(power, axis=0)
-        snrs = xp.cumsum(snrs, axis=-1)    
+        # For each signal, keep only first n_s channels
+        snrs = mx.sum(power, axis=0)
+        snrs = mx.cumsum(snrs, axis=-1)    
 
-        snrs_reshaped = xp.reshape(snrs, (-1, snrs.shape[2]))
-        ns = 1 + xp.arange(snrs_reshaped.shape[-1])
-        ns = xp.multiply(xp.ones(snrs_reshaped.shape), ns[None, :])
+        snrs_reshaped = mx.reshape(snrs, (-1, snrs.shape[2]))
+        ns = 1 + mx.arange(snrs_reshaped.shape[-1])
+        ns = mx.multiply(mx.ones(snrs_reshaped.shape), ns[None, :])
         ns = (ns == (n_s.flatten())[:, None])
-        snrs_reshaped = snrs_reshaped[ns]
-        snrs = xp.reshape(snrs_reshaped, snrs.shape[0:2])
+        snrs_reshaped = mx.array([s for s, n in zip(snrs_reshaped, ns) if n])
+        snrs = mx.reshape(snrs_reshaped, snrs.shape[0:2])
         
-        a = cp.asnumpy(snrs)
-        if np.isnan(a).any():
-            b = 3
-        
-        return snrs        
+        return snrs
                             
-    def project_signal(self, signal, y_bar_squared, device):
-        """Project the signal such that noise has the minimum energy"""  
-        xp = self.get_array_module(signal)
-          
-        # Compute eigen values and eigen vectors, which give us the
-        # solution to the optimization problem of Eq. (10).
-        # The matrix is symmetric, thus we use eigh function.
-        eigen_values, eigen_vectors = xp.linalg.eigh(y_bar_squared)
+    def project_signal(self, signal, y_bar_squared):
+        """Project signal such that noise has minimum energy"""          
+        # Compute eigenvalues/vectors for optimization problem
+        eigen_values, eigen_vectors = mx.linalg.eigh(y_bar_squared)
         
-        # Compute how many channes we need to keep based on the desired 
-        # energy of the retained noise. See Eq. (12)
-        n_s = self.compute_channels_count(eigen_values, device)
+        # Compute channel count based on desired energy of retained noise
+        n_s = self.compute_channels_count(eigen_values)
         
-        # The following manipulations are simply to normalize eigen vectors
-        eigen_values = xp.sqrt(eigen_values)
-        eigen_values = xp.expand_dims(eigen_values, axis=3)       
-        eigen_vectors = xp.transpose(eigen_vectors, axes=(0, 1, 3, 2))
-        eigen_vectors = xp.divide(eigen_vectors, eigen_values)
-        eigen_vectors = xp.transpose(eigen_vectors, axes=(0, 1, 3, 2))
+        # Normalize eigenvectors
+        eigen_values = mx.sqrt(eigen_values)
+        eigen_values = mx.expand_dims(eigen_values, 3)       
+        eigen_vectors = mx.transpose(eigen_vectors, (0, 1, 3, 2))
+        eigen_vectors = eigen_vectors / eigen_values
+        eigen_vectors = mx.transpose(eigen_vectors, (0, 1, 3, 2))
         
-        # It is possible that each signal in the batch needs a different
-        # number of channels.  This prevents us from keeping everything in a 
-        # single matrix to batch-process them.  To overcome this, we compute
-        # the maximum number of channels in the batch and keep that many
-        # channels.  Later on in the code, we will discard the remaining
-        # channels that were supposed to be discarded here.  
-        max_index = xp.max(n_s)
+        # Keep max channels in batch and discard rest later
+        max_index = mx.max(n_s)
         eigen_vectors = eigen_vectors[:, :, :, 0:max_index]
         
-        # Compute the projected signal per Eq. (7).
-        projected_signal = xp.matmul(signal[:, None, :, :], eigen_vectors)            
-        return (projected_signal, n_s)
+        # Compute projected signal per Eq. (7)
+        projected_signal = mx.matmul(signal[:, None, :, :], eigen_vectors)            
+        return projected_signal, n_s
     
-    def compute_channels_count(self, eigen_values, device):
-        """Compute how many channels we need based on ratio of energy."""        
-        # The following is a pythonic implementation of Eq. (12)   
-        xp = self.get_array_module(eigen_values)
-        running_sum = xp.cumsum(eigen_values, axis=-1)
-        total_energy = xp.expand_dims(running_sum[:, :, -1], axis=-1)
-        energy_ratio = xp.divide(running_sum, total_energy)
-        flags = (energy_ratio <= self.energy_ratio_handle[device])        
-        n_s = xp.sum(flags, axis=-1)        
-        n_s[n_s == 0] = 1
+    def compute_channels_count(self, eigen_values):
+        """Compute channel count based on energy ratio"""
+        # Implementation of Eq. (12)
+        running_sum = mx.cumsum(eigen_values, axis=-1)
+        total_energy = mx.expand_dims(running_sum[:, :, -1], -1)
+        energy_ratio = running_sum / total_energy
+        flags = (energy_ratio <= self.energy_ratio_handle[0])        
+        n_s = mx.sum(flags, axis=-1)        
+        n_s = mx.array([1 if x == 0 else x for x in n_s])
         return n_s
         
-    def yule_walker(self, time_series, device):       
-        "Yule-Walker AR model estimation, based on the sm models"            
-        xp = self.get_array_module(time_series)
-        
-        # A short hand for ar_order
+    def yule_walker(self, time_series):       
+        """Yule-Walker AR model estimation"""            
         p = self.ar_order
 
-        if self.use_gpu == True: 
-            batch_size = 5
-            
-            # The custom kernel works with 3D arrays only.
-            shape = time_series.shape
-            time_series = xp.reshape(time_series, (-1, shape[-1]))
-            
-            # One is added in case the samples count is not divisible by batch_size
-            # Adding extra zeros does not affect the summation, so it is safe.
-            batch_count = shape[-1]//batch_size + 1
-                         
-            # Helps us keep track of indexing time_series in the kernel 
-            # considering that the sizes of time_series and r do not mach any more
-            # (because of the +1 we have in the previous statement)
-            offset = batch_count * batch_size - shape[-1]
-            
-            r = xp.zeros(
-                (p+1,) + shape[0:-1] + (batch_count,), dtype=xp.float32) 
-            
-            r = xp.reshape(r, (p+1, -1, batch_count))    
-            
-            # Kernel settings
-            grid_size = (r.shape[1], r.shape[0])        
-            block_size = (batch_count,)
-                       
-            self.sum_product_raw(grid_size, block_size, (
-                time_series, batch_size, shape[-1],
-                time_series.size, offset, r))
-            
-            r = xp.sum(r, axis=-1)
-            r = xp.reshape(r, (p+1,) + shape[:-1])   
-            
-        else:            
-            r = xp.zeros((p+1,) + time_series.shape[0:-1], dtype=xp.float32)                
-            r[0] = xp.sum(xp.square(time_series), axis=-1)
-        
-            # By far, the slowest part of the entire algorithm.        
-            for k in xp.arange(1, p+1): 
-                r[k] = xp.sum(xp.multiply(
-                    time_series[:, :, :, :, :-k], 
-                    time_series[:, :, :, :,  k:]),
-                    axis=-1) 
+        # Initialize r
+        r = mx.zeros((p+1,) + time_series.shape[0:-1], dtype=mx.float32)                
+        r = r.at[0].set(mx.sum(mx.square(time_series), axis=-1))
+    
+        # Compute autocorrelations
+        for k in range(1, p+1): 
+            r = r.at[k].set(mx.sum(mx.multiply(
+                time_series[:, :, :, :, :-k], 
+                time_series[:, :, :, :, k:]),
+                axis=-1))
            
-        r = xp.transpose(r, axes=(1, 2, 3, 4, 0))
-        r = r / self.samples_count_handle[device]   
-        G = xp.zeros(r.shape[:-1] + (p, p), dtype=xp.float32) 
-        G[:, :, :, :, 0, :] = r[:, :, :, :, :-1]
+        r = mx.transpose(r, (1, 2, 3, 4, 0))
+        r = r / self.samples_count_handle[0]  
         
-        for i in np.arange(1, p):
-            G[:, :, :, :, i, i:] = r[:, :, :, :, :-i-1]
+        # Build Toeplitz matrix
+        G = mx.zeros(r.shape[:-1] + (p, p), dtype=mx.float32) 
+        G = G.at[:, :, :, :, 0, :].set(r[:, :, :, :, :-1])
+        
+        for i in range(1, p):
+            G = G.at[:, :, :, :, i, i:].set(r[:, :, :, :, :-i-1])
           
-        # Construct a toeplitz matrix.
-        # Such matrix can be constructed using the following transformation:
+        # Construct final matrix using transformation:
         # (1/a0)A = GGT - (G - I)(G - I)T = G + GT - I
-        A = xp.divide(G, (G[:, :, :, :, 0, 0])[:, :, :, :, None, None])
-        A = A + xp.transpose(A, axes=(0, 1, 2, 3, 5, 4))
-        A = xp.subtract(A, xp.eye(A.shape[-1], dtype=xp.float32))
-        R = xp.multiply(A, (G[:, :, :, :, 0, 0])[:, :, :, :, None, None])
-        rho = xp.linalg.solve(R, r[:, :, :, :, 1:])
-        sigmasq = xp.sum(xp.multiply(r[:, :, :, :, 1:], rho), axis=-1)
-        sigmasq =  r[:, :, :, :, 0] - sigmasq     
+        A = G / (G[:, :, :, :, 0, 0])[:, :, :, :, None, None]
+        A = A + mx.transpose(A, (0, 1, 2, 3, 5, 4))
+        A = A - mx.eye(A.shape[-1], dtype=mx.float32)
+        R = A * (G[:, :, :, :, 0, 0])[:, :, :, :, None, None]
         
-        # Returns the coefficients and noise energy
+        # Solve system and compute noise
+        rho = mx.linalg.solve(R, r[:, :, :, :, 1:])
+        sigmasq = mx.sum(mx.multiply(r[:, :, :, :, 1:], rho), axis=-1)
+        sigmasq = r[:, :, :, :, 0] - sigmasq     
+        
         return rho, sigmasq
     
-    def perform_voting_initialization(self, device):
-        """Perform initialization and precomputations common to all voters"""              
-        # Normalize all data
-        self.all_signals -= np.mean(self.all_signals, axis=-1)[:, :, None]
-        self.all_signals /= np.std(self.all_signals, axis=-1)[:, :, None]    
+    def perform_voting_initialization(self, device=0):
+        """Initialize voting operations"""              
+        # Normalize data
+        self.all_signals = self.all_signals - mx.mean(self.all_signals, axis=-1)[:, :, None]
+        self.all_signals = self.all_signals / mx.std(self.all_signals, axis=-1)[:, :, None]
         
-        # Generate handles to normalized data
+        # Create handle for normalized data
         self.all_signals_handle = self.handle_generator(self.all_signals)
         
-        # The rest is only needed for gpu-based and single-threaded only!
+        # Skip if multithreaded
         if self.explicit_multithreading > 0:
             return
         
-        signal = self.all_signals_handle[device]      
-        xp = self.get_array_module(signal)
-
-        # Pre-compute y_bar per Eq. (9).
-        signal = xp.transpose(signal, axes=(0, 2, 1))
+        # Pre-compute y_bar per Eq. (9)
+        signal = self.all_signals_handle[0]
+        signal = mx.transpose(signal, (0, 2, 1))
         
-        # An artifical for loop is ensuing!
-        # Although it could be avoided, using a for loop eases up memory usage.
-        y_bar = xp.zeros(
+        # Initialize y_bar
+        y_bar = mx.zeros(
             (self.signals_count,
-              self.targets_count,
-              self.samples_count,
-              self.electrodes_count), dtype=xp.float32)
+             self.targets_count,
+             self.samples_count,
+             self.electrodes_count), dtype=mx.float32)
         
-        for i in xp.arange(self.signals_count):
-            y_bar[i] = xp.matmul(
-                self.xplus_handle[device],
-                signal[i, :, :])    
-        
-        # Equivalent to the For loop above but needs more memory to compute
-        # everything in one shot. 
-        # y_bar = xp.matmul(
-        #     self.xplus_handle[device][None, :, :, :],
-        #     signal[:, None, :, :])           
-        
-        y_bar = xp.subtract(signal[:, None, :, :], y_bar)
+        # Compute for each signal
+        for i in range(self.signals_count):
+            y_bar = y_bar.at[i].set(mx.matmul(
+                self.xplus_handle[0],
+                signal[i, :, :]))
+            
+        y_bar = signal[:, None, :, :] - y_bar
                   
-        self.y_bar_squared = xp.matmul(
-            xp.transpose(y_bar, axes=(0, 1, 3, 2)), y_bar)  
+        self.y_bar_squared = mx.matmul(
+            mx.transpose(y_bar, (0, 1, 3, 2)), y_bar)
         
-        # Generate handles
+        # Create handle
         self.y_bar_squared_handles = self.handle_generator(self.y_bar_squared)
         
     def class_specific_initializations(self):
-        """Perform necessary initializations and precomputations"""
-        # Perform some percomputations only in the first run.  
-        # These computations only rely on the template signal and can thus
-        # be pre-computed to improve performance. 
+        """Perform necessary initializations"""
+        # Compute templates
         self.compute_templates()  
         
-        # Get the inverse of sine and cosine pairs of each harmonic. 
-        # Need for computing SNR later on. 
+        # Get harmonic inverses for SNR
         self.precompute_each_harmonic_inverse()
         
-        self.xplus = np.matmul(
+        self.xplus = mx.matmul(
             self.template_signal,
-            np.linalg.pinv(self.template_signal))
+            mx.array(np.linalg.pinv(self.template_signal.numpy())))
                 
-        # Compute some constants. We need them later for computing SNR. 
-        k1 = ((-2 * 1j * np.pi / self.sampling_frequency)
+        # Compute constants for SNR
+        k1 = ((-2j * mx.pi / self.sampling_frequency)
               * self.targets_frequencies)
-        k1 = np.multiply(
-            k1[:, None], (np.arange(1, self.ar_order+1)[:, None]).T)
-        k2 = np.pi * self.samples_count / 4
-        harmonics_scaler = np.arange(1, self.harmonics_count+1)
-        k3 = np.multiply(harmonics_scaler[:, None, None], k1)
-        k3 = np.exp(k3)        
+        k1 = mx.multiply(
+            k1[:, None], (mx.arange(1, self.ar_order+1)[:, None]).T)
+        k2 = mx.pi * self.samples_count / 4
+        harmonics_scaler = mx.arange(1, self.harmonics_count+1)
+        k3 = mx.multiply(harmonics_scaler[:, None, None], k1)
+        k3 = mx.exp(k3)        
         self.k3 = k3
         self.k2 = k2
         
@@ -571,38 +458,27 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
         self.k3_handle = self.handle_generator(self.k3)
         self.energy_ratio_handle = self.handle_generator(self.energy_ratio)           
         self.samples_count_handle = self.handle_generator(self.samples_count)
-        
-        # Force compile the kernel by running some dummy analysis. 
-        if self.use_gpu == True:
-            dummy = np.random.rand(8, 300)
-            dummy = cp.asarray(dummy)
-            r = cp.zeros((8, 8))
-            self.sum_product_raw(
-                (8, 8), (64,), (dummy, 10, 300, dummy.size, 0, r)
-                )
                    
     def precompute_each_harmonic_inverse(self):
-        """"pre-compute the iverse of each harmonics."""        
-        # This saves up like 5% performance.
-        # Extract sine and cosine pair of each harmonic and compute its
-        # inverse.  This is needed for computing the SNRs.  It needs to be done
-        # only once. 
-        self.sub_template_inverse = np.zeros(
+        """Pre-compute the inverse of each harmonic"""
+        # Saves ~5% performance
+        # Extract sine/cosine pair of each harmonic and compute inverse
+        self.sub_template_inverse = mx.zeros(
             (self.harmonics_count,
-              self.template_signal.shape[0],
-              2,
-              self.template_signal.shape[1]))
+             self.template_signal.shape[0],
+             2,
+             self.template_signal.shape[1]))
         
-        for h in np.arange(0, self.harmonics_count*2, 2):
+        for h in range(0, self.harmonics_count*2, 2):
             x = self.template_signal[:, :, (h, h+1)]
-            self.sub_template_inverse[np.int32(h/2)] = np.linalg.pinv(x)
+            # Need to use numpy for pinv since MLX doesn't have it yet
+            x_inv = np.linalg.pinv(x.numpy())
+            self.sub_template_inverse = self.sub_template_inverse.at[h//2].set(
+                mx.array(x_inv))
             
     def get_current_data_batch(self):
-        """Bundle all data so they can be processed toegher"""
-        # Bundling helps increase GPU and CPU utilization. 
-       
-        # Extract bundle information. 
-        # Helps with the code's readability. 
+        """Bundle data for batch processing"""
+        # Extract bundle info for readability
         batch_index = self.channel_selection_info_bundle[0]        
         batch_population = self.channel_selection_info_bundle[1]
         batch_electrodes_count = self.channel_selection_info_bundle[2]
@@ -610,49 +486,44 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
         last_signal = self.channel_selection_info_bundle[4]
         signals_count = last_signal - first_signal
         
-        # Pre-allocate memory for the batch
-        signal = np.zeros(
+        # Pre-allocate memory for batch
+        signal = mx.zeros(
             (signals_count, batch_population,
              batch_electrodes_count, self.samples_count),
-            dtype=np.float32)        
+            dtype=mx.float32)        
                 
-        y_bar_squared = np.zeros(
+        y_bar_squared = mx.zeros(
             (signals_count, batch_population, self.targets_count, 
              batch_electrodes_count, batch_electrodes_count),
-            dtype=np.float32)
+            dtype=mx.float32)
         
         selected_signals = self.all_signals_handle[0][first_signal:last_signal]  
         selected_ybar = self.y_bar_squared_handles[0][first_signal:last_signal]
     
-        for j in np.arange(batch_population):
+        for j in range(batch_population):
             current_selection = self.channel_selections[batch_index]
-            signal[:, j] = selected_signals[:, current_selection, :]     
+            signal = signal.at[:, j].set(
+                selected_signals[:, current_selection, :])     
             ybar2 = selected_ybar[:, :, current_selection, :]
             ybar2 = ybar2[:, :, :, current_selection]     
-            y_bar_squared[:, j] = ybar2
+            y_bar_squared = y_bar_squared.at[:, j].set(ybar2)
             batch_index += 1
             
-        signal = np.reshape(signal, (-1,) + signal.shape[2:])
-        
-        y_bar_squared = np.reshape(
+        signal = mx.reshape(signal, (-1,) + signal.shape[2:])
+        y_bar_squared = mx.reshape(
             y_bar_squared, (-1,) + y_bar_squared.shape[2:])
-          
-        # Move the extracted batches to the device memory if need be. 
-        if self.use_gpu == True:      
-            signal = cp.asarray(signal)
-            y_bar_squared = cp.asarray(y_bar_squared)
             
         return (signal, y_bar_squared)
                       
     @property
     def ar_order(self):
-        """Getter function for the order of the autoregressive model"""
+        """Getter for AR model order"""
         return self.__ar_order
     
     @ar_order.setter
     def ar_order(self, order):
-        """Setter function for the order of the autoregressive model"""
-        error_message = "Oorder of the AR model must be a positive integer."
+        """Setter for AR model order"""
+        error_message = "Order of the AR model must be a positive integer."
         
         try:
             order = int(order)
@@ -666,12 +537,12 @@ class FeatureExtractorMEC(FeatureExtractorTemplateMatching):
         
     @property
     def energy_ratio(self):
-        """Getter function for energy ratio"""
+        """Getter for energy ratio"""
         return self.__energy_ratio
     
     @energy_ratio.setter
     def energy_ratio(self, energy_ratio):
-        """Setter function for energy ratio"""
+        """Setter for energy ratio"""
         error_message = "Energy ratio must be a real number between 0 and 1"
         
         try:
