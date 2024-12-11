@@ -1055,7 +1055,7 @@ class FeatureExtractor:
         message = "Second cutoff frequency must be a positive real number. "
         
         try:
-            cutoff_frequency = float(cutoff_frequency)
+            cutoff_frequency = float(cutoffrequency)
         except(ValueError, TypeError):
             self.quit(message)
         
@@ -1257,7 +1257,6 @@ class FeatureExtractor:
     
     @use_gpu.setter
     def use_gpu(self, flag):
-        """Setter function for the attribute use_gpu"""
         message = "Cannot set use_gpu. use_gpu flag must either True or False."
         
         try:
@@ -1274,13 +1273,13 @@ class FeatureExtractor:
                 + "to a positive value.  use_gpu is not available when "
                 + "multithreading is enabled. ")
             
-        if flag == True and cupy_available_global == False:
+        if flag == True and cupy_available_global == False and mlx_available_global == False:
             self.quit(
-                "Cannot set use_gpu because the calss failed to import cupy. "
-                + "This is probably because cupy is not installed correctly. "
-                + "Or the host does not have any CUDA-capable device. "
+                "Cannot set use_gpu because the calss failed to import cupy or mlx. "
+                + "This is probably because cupy or mlx is not installed correctly. "
+                + "Or the host does not have any CUDA-capable or Apple Silicon device. "
                 + "You can still run this code even if the host does not "
-                + "a CUDA device or even if cupy is not installed. "
+                + "a CUDA or Apple Silicon device or even if cupy or mlx is not installed. "
                 + "But in order to do this, you should set use_gpu flag "
                 + "in setup_feature_extractor() function to false. ")                
             
