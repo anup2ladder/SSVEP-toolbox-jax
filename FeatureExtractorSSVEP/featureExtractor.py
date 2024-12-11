@@ -4,65 +4,13 @@ import numpy as np
 import sys
 from scipy.signal import sosfiltfilt, butter
 from multiprocessing import Pool
-import platform
 
-# Try importing CuPy for NVIDIA GPU support
 try:
     import cupy as cp
     cupy_available_global = True
-except ImportError:
+except:
     cupy_available_global = False
     cp = np
-
-# Try importing MLX for Apple Silicon GPU support
-try:
-    import mlx.core as mx
-    mlx_available_global = platform.processor() == 'arm' and platform.system() == 'Darwin'
-except ImportError:
-    mlx_available_global = False
-    mx = np
-
-class BackendManager:
-    """Manages array computation backend selection and operations"""
-    
-    def __init__(self, use_gpu=False):
-        self.use_gpu = use_gpu
-        self._setup_backend()
-        
-    def _setup_backend(self):
-        """Initialize the appropriate backend based on hardware and availability"""
-        if not self.use_gpu:
-            self.backend = 'numpy'
-            self.xp = np
-            return
-            
-        # Check for Apple Silicon first
-        if mlx_available_global:
-            self.backend = 'mlx'
-            self.xp = mx
-        # Then check for NVIDIA GPU
-        elif cupy_available_global:
-            self.backend = 'cupy'
-            self.xp = cp
-        else:
-            self.backend = 'numpy'
-            self.xp = np
-            
-    def to_numpy(self, array):
-        """Convert array to numpy if needed"""
-        if self.backend == 'cupy':
-            return cp.asnumpy(array)
-        elif self.backend == 'mlx':
-            return array.numpy()
-        return array
-    
-    def to_device(self, array):
-        """Convert numpy array to device array"""
-        if self.backend == 'cupy':
-            return cp.asarray(array)
-        elif self.backend == 'mlx':
-            return mx.array(array)
-        return array
     
 
 class FeatureExtractor:
@@ -237,17 +185,6 @@ class FeatureExtractor:
             self.devices_count = cp.cuda.runtime.getDeviceCount()
         else:
             self.devices_count = 0
-            
-        # Initialize backend manager
-        self.backend = BackendManager()
-        
-        # Update device detection
-        if cupy_available_global:
-            self.nvidia_devices_count = cp.cuda.runtime.getDeviceCount()
-        else:
-            self.nvidia_devices_count = 0
-            
-        self.has_apple_silicon = mlx_available_global
             
     def build_feature_extractor(
             self, 
@@ -740,7 +677,10 @@ class FeatureExtractor:
             
     def get_array_module(self, array):
         """Return the module of the array even if failed to import cupy"""
-        return self.backend.xp
+        if self.use_gpu == False:
+            return np
+        else:
+            return cp.get_array_module(array)
         
     def filterbank_standard_aggregator(self, features, a=1.25, b=0.25, axis=1):
         """
@@ -1055,7 +995,7 @@ class FeatureExtractor:
         message = "Second cutoff frequency must be a positive real number. "
         
         try:
-            cutoff_frequency = float(cutoffrequency)
+            cutoff_frequency = float(cutoff_frequency)
         except(ValueError, TypeError):
             self.quit(message)
         
@@ -1257,6 +1197,7 @@ class FeatureExtractor:
     
     @use_gpu.setter
     def use_gpu(self, flag):
+        """Setter function for the attribute use_gpu"""
         message = "Cannot set use_gpu. use_gpu flag must either True or False."
         
         try:
@@ -1273,18 +1214,17 @@ class FeatureExtractor:
                 + "to a positive value.  use_gpu is not available when "
                 + "multithreading is enabled. ")
             
-        if flag == True and cupy_available_global == False and mlx_available_global == False:
+        if flag == True and cupy_available_global == False:
             self.quit(
-                "Cannot set use_gpu because the calss failed to import cupy or mlx. "
-                + "This is probably because cupy or mlx is not installed correctly. "
-                + "Or the host does not have any CUDA-capable or Apple Silicon device. "
+                "Cannot set use_gpu because the calss failed to import cupy. "
+                + "This is probably because cupy is not installed correctly. "
+                + "Or the host does not have any CUDA-capable device. "
                 + "You can still run this code even if the host does not "
-                + "a CUDA or Apple Silicon device or even if cupy or mlx is not installed. "
+                + "a CUDA device or even if cupy is not installed. "
                 + "But in order to do this, you should set use_gpu flag "
                 + "in setup_feature_extractor() function to false. ")                
             
         self.__use_gpu = flag
-        self.backend = BackendManager(flag)
         
     @property
     def max_batch_size(self):
