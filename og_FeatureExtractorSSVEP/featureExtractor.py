@@ -633,7 +633,8 @@ class FeatureExtractor:
                          output='sos',
                          fs=self.sampling_frequency)            
             all_sos.append(sos)
-            
+        print(type(all_sos))
+        print(all_sos)
         self.sos_matrices = np.array(all_sos)
         
     def decompose_signal(self):

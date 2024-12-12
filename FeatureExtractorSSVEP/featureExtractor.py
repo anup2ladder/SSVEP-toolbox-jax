@@ -10,6 +10,9 @@ import mlx.core as mx  # Main MLX library
 # Force CPU usage at module level
 mx.set_default_device(mx.cpu)
 
+# Flag to check if cupy is available – temporary backwards compatibility
+cupy_available_global = False
+
 
 class FeatureExtractor:
     """A parent class for all feature extraction methods"""
@@ -84,9 +87,11 @@ class FeatureExtractor:
         self.channel_selection_info_bundle = 0
         
         # Processing flags
-        self.use_gpu = False  # Kept for compatibility but not used with MLX
+        # self.use_gpu = False  # Kept for compatibility but not used with MLX
+        self.__use_gpu = False
         self.max_batch_size = 16
-        self.explicit_multithreading = 0
+        # self.explicit_multithreading = 0
+        self.__explicit_multithreading = 0
         self.class_initialization_is_complete = False
             
     def build_feature_extractor(
@@ -410,8 +415,11 @@ class FeatureExtractor:
                          output='sos',
                          fs=self.sampling_frequency)            
             all_sos.append(sos)
-            
-        self.sos_matrices = mx.array(all_sos)
+        
+        print(type(all_sos))
+        print(all_sos)
+        print("TEST")
+        self.sos_matrices = mx.array(np.array(all_sos))
         
     def decompose_signal(self):
         """Decompose the signal into multiple bands"""
@@ -966,14 +974,28 @@ class FeatureExtractor:
         message = "use_gpu flag must be either True or False."
         
         try:
-            flag = bool(flag)
+            flag = np.bool8(flag)
         except(TypeError, ValueError):
             self.quit(message)
             
-        if self.explicit_multithreading > 0:
+        if flag.size != 1:
+            self.quit(message)
+            
+        if flag == True and self.explicit_multithreading > 0:
             self.quit(
                 "Cannot set use_gpu because explicit_multithreading is set "
-                + "to a positive value.")
+                + "to a positive value.  use_gpu is not available when "
+                + "multithreading is enabled. ")
+            
+        if flag == True and cupy_available_global == False:
+            self.quit(
+                "Cannot set use_gpu because the calss failed to import cupy. "
+                + "This is probably because cupy is not installed correctly. "
+                + "Or the host does not have any CUDA-capable device. "
+                + "You can still run this code even if the host does not "
+                + "a CUDA device or even if cupy is not installed. "
+                + "But in order to do this, you should set use_gpu flag "
+                + "in setup_feature_extractor() function to false. ")                
             
         self.__use_gpu = flag
         
@@ -1008,8 +1030,11 @@ class FeatureExtractor:
         message = "explicit_multithreading must be an integer."
         
         try:
-            cores_count = int(cores_count)
+            cores_count = np.int32(cores_count)
         except(ValueError, TypeError):
+            self.quit(message)
+            
+        if cores_count.size != 1:
             self.quit(message)
             
         if cores_count < 0:
@@ -1017,14 +1042,14 @@ class FeatureExtractor:
             
         if cores_count >= 2048:
             self.quit(
-                "explicit_multithreading is too large. Typically "
-                + "this should be the same size as the number of cores "
-                + "or a number in that order.")
+                "explicit_multithreading is too large.  Typically " 
+                + "this should be the same size as the number of cores " 
+                + "or a number in that order. ")
         
         if self.use_gpu == True and cores_count > 0:
             self.quit(
                 "Cannot set explicit_multithreading when use_gpu "
-                + "is set to True. Multithreading is not supported "
-                + "when using GPUs.")
+                + "is set to True.  Multithreading is not supported "
+                + "when using GPUs. ")
             
         self.__explicit_multithreading = cores_count
